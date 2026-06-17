@@ -1,5 +1,75 @@
 # @dudousxd/nestjs-authz
 
+## 0.3.0
+
+### Minor Changes
+
+- [#2](https://github.com/DavideCarvalho/nestjs-authz/pull/2) [`2ecb0f4`](https://github.com/DavideCarvalho/nestjs-authz/commit/2ecb0f46342fa4527fc01f1097720f2e7bcf9aa7) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add coarse, role-based authorization alongside the granular ability checks.
+
+  - **`@Roles('admin', 'teacher')` + `RolesGuard`**: a route is allowed when the current
+    user holds ANY of the listed roles. Registered as an `APP_GUARD` by `AuthzModule`
+    (inert on un-annotated routes), it resolves the current user exactly as the `Gate`
+    does and denies an unauthenticated request by default.
+  - **`Gate.hasRole(role)` / `Gate.hasAnyRole(roles[])`** (and `gate.forUser(user).hasRole(...)`),
+    async, resolving the user's effective roles and testing membership.
+  - **Pluggable role source, two layers (unioned):**
+    1. A default `RoleResolver` that reads roles off the user object — `user.roles`
+       (`string[]`) OR `user.role` (`string | string[]`), normalized to a `string[]`.
+       This makes role checks work with ZERO RBAC tables. Override via
+       `AuthzModule.forRoot({ resolveRoles })`.
+    2. An OPTIONAL `ROLE_PROVIDER` seam (`Symbol.for('@dudousxd/nestjs-authz:role-provider')`,
+       consulted with `@Optional()`) — mirroring `PERMISSION_PROVIDER` — so an RBAC adapter
+       can supply roles from a store. When both yield roles, the Gate unions them; when
+       neither does, the check denies.
+
+  Exports the `Roles` decorator, `RolesGuard`, `RoleResolver`, `defaultRoleResolver`,
+  `ROLE_PROVIDER`, `ROLES_METADATA`, and a `RoleProvider` interface. Purely additive — the
+  existing permission-provider / can-endpoint / diagnostics behavior is unchanged.
+
+### Patch Changes
+
+- [#2](https://github.com/DavideCarvalho/nestjs-authz/pull/2) [`2ecb0f4`](https://github.com/DavideCarvalho/nestjs-authz/commit/2ecb0f46342fa4527fc01f1097720f2e7bcf9aa7) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add `@dudousxd/nestjs-authz-inertia`: a 3-tier Inertia integration that lets client `can(...)`
+  checks resolve **without a network request** (the Laravel/Inertia model).
+
+  - **Tier 1 — shared props (no request):** `AuthzInertiaModule` (a global interceptor that calls
+    `req.inertia.share(...)`) or `createAuthzShare(gate, policyRegistry)` (a factory for
+    `InertiaModule.forRoot({ share })`) resolves the current user's class-level abilities — all
+    ad-hoc gates + class-level `@Policy` methods — into `props.auth.can` via direct in-process
+    `gate.allows(...)` calls.
+  - **Tier 2 — per-resource map (no request):** `authorizeResource(gate, instance, abilities)`
+    returns a `{ update, delete }` map a controller attaches to a serialized resource.
+  - **Tier 3 — fallback endpoint (last resort):** consumes core's opt-in `POST /authz/can`.
+  - **Framework-neutral client** (`@dudousxd/nestjs-authz-inertia/client`): an `AbilityStore`,
+    `hydrateFromInertiaProps` / `hydrateResource`, and a `createCan` resolver that reads hydrated
+    decisions synchronously (no fetch on a cache hit) and only falls back (fetch the endpoint, or
+    deny) when the ability/resource is unknown.
+  - **Denial filter (`AuthzDenialFilter`):** `AuthzInertiaModule.forRoot` also registers a global
+    `APP_FILTER` that converts `@Roles`/`@Can` denials (`ForbiddenException`) into a friendly 303
+    redirect on Inertia requests (`X-Inertia` header) — `/login` when unauthenticated, `/403` when
+    authenticated-but-forbidden (auth-state read from the optional `CONTEXT_ACCESSOR`). Non-Inertia
+    (REST) requests are rethrown and keep the normal 403 JSON. Configurable via
+    `forRoot({ denial: { loginUrl, forbiddenUrl, enabled, handler } })` (`enabled: false` opts out;
+    `handler(exception, host)` is a full escape hatch). Targets pass the same open-redirect guard
+    nestjs-inertia uses, falling back to a safe default if unsafe.
+
+  `@dudousxd/nestjs-authz` (patch): add an opt-in `POST /authz/can` fallback controller behind
+  `AuthzModule.forRoot({ canEndpoint: true })` (default off; accepts a custom path string). It runs
+  `gate.allows(ability, resource?)` for the current context user and returns `{ allowed }`, failing
+  closed for unresolved abilities. Also exposes `Gate.gateNames()` and `PolicyRegistry.classAbilities()`
+  so integrations can enumerate a user's class-level abilities.
+
+- [#2](https://github.com/DavideCarvalho/nestjs-authz/pull/2) [`2ecb0f4`](https://github.com/DavideCarvalho/nestjs-authz/commit/2ecb0f46342fa4527fc01f1097720f2e7bcf9aa7) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add `@dudousxd/nestjs-authz-telescope`: a `@dudousxd/nestjs-telescope` extension that records every
+  authorization decision the `Gate` reaches (ability, allow/deny, the reason it was decided, the user
+  and the resource) as an `authorization` Telescope entry plus an "Authorization" dashboard page (a
+  top-N of denied abilities and a table of recent decisions) — so a 403 is debuggable. The extension's
+  `AuthorizationWatcher` subscribes to the new `nestjs-authz:decision` diagnostics channel; nothing is
+  emitted (and nothing recorded) when no observer is listening.
+
+  The core `Gate` now publishes each decision on a dependency-free `node:diagnostics_channel`
+  (`nestjs-authz:decision`, exported as `AUTHZ_DECISION_CHANNEL`) after a verdict is reached. The
+  emission is gated on `channel.hasSubscribers` and fully guarded, so it is zero-overhead with no
+  subscriber and can never affect a check. No existing behavior changes.
+
 ## 0.2.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-telescope",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "nestjs-telescope extension for @dudousxd/nestjs-authz — records every authorization decision (ability, allow/deny, reason) in the Telescope dashboard so 403s are debuggable.",
   "license": "MIT",
   "repository": {

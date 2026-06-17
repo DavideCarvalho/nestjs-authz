@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.5.1
+
+### Patch Changes
+
+- [`b91713f`](https://github.com/DavideCarvalho/nestjs-authz/commit/b91713f2a7989d1630302b19feda14e381136532) - perf: memoize per-check work in the authorization path — cache the three `ModuleRef` seam resolutions (permission/context/role) so the `strict: false` container scan runs at most once per seam instead of per check, and cache `PolicyRegistry.classAbilities()` (invalidated on `register()`).
+
 ## 0.5.0
 
 ### Minor Changes

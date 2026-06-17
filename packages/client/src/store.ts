@@ -155,13 +155,14 @@ export type CanResolver = (ability: string, resource?: ResourceRef) => boolean |
  * - **Cache miss, `fallback: 'fetch'`** → POSTs `{ ability, resource }` to the
  *   endpoint and returns a `Promise<boolean>` from `{ allowed }`.
  *
- * **Resource-bound decisions and the fetch fallback:** per-instance decisions
- * (`can(ability, { type, id })`) MUST be hydrated via shared props /
- * `authorizeResource` (tiers 1-2). The `POST /authz/can` fetch fallback only
- * resolves class-level abilities and ad-hoc gates — the `{ type, id }` shim it
- * sends never matches a `@Policy` by constructor, so a resource-bound ability
- * that misses the cache will DENY. On such a miss this logs a one-time
- * `console.warn` so the silent deny is debuggable.
+ * **Resource-bound decisions and the fetch fallback:** prefer hydrating per-instance
+ * decisions (`can(ability, { type, id })`) via shared props / `authorizeResource`
+ * (tiers 1-2). The `POST /authz/can` fetch fallback sends a `{ type, id }` shim; the
+ * server resolves it per-instance ONLY when the app registered a matching
+ * `resourceLoaders` entry for that `type` (which rehydrates the real entity). Without
+ * such hydration or loader the resource-bound ability DENIES — so on a resource-bound
+ * cache miss under `fallback: 'fetch'` this logs a one-time `console.warn` so the
+ * potential silent deny is debuggable.
  */
 export function createCan(store: AbilityStore, options: AbilityStoreOptions = {}): CanResolver {
   const fallback = options.fallback ?? 'deny';
@@ -174,13 +175,14 @@ export function createCan(store: AbilityStore, options: AbilityStoreOptions = {}
 
     if (fallback === 'deny') return false;
 
-    // A resource-bound ability that misses the cache cannot be resolved by the
-    // endpoint fallback (the {type,id} shim never matches a @Policy). Warn once.
+    // A resource-bound ability that misses the cache is resolved by the endpoint
+    // fallback ONLY if the server registered a `resourceLoaders` entry for this
+    // `type` (otherwise the {type,id} shim never matches a @Policy and DENIES). Warn once.
     if (resource && !warnedResourceFetch) {
       warnedResourceFetch = true;
       const id = JSON.stringify(resource.id ?? null);
       console.warn(
-        `[nestjs-authz] can('${ability}', { type: '${resource.type}', id: ${id} }) missed the cache and fell through to the '${endpoint}' fetch fallback, which cannot resolve per-instance policy decisions and will DENY. Hydrate resource decisions via shared props / authorizeResource (tiers 1-2) instead.`,
+        `[nestjs-authz] can('${ability}', { type: '${resource.type}', id: ${id} }) missed the cache and fell through to the '${endpoint}' fetch fallback. The server resolves this per-instance only if it registered a resourceLoaders entry for '${resource.type}'; otherwise it will DENY. Hydrate resource decisions via shared props / authorizeResource (tiers 1-2), or register a resourceLoaders loader.`,
       );
     }
 

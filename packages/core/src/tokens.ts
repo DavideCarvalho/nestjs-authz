@@ -4,6 +4,22 @@ export const AUTHZ_MODULE_OPTIONS = Symbol.for('@dudousxd/nestjs-authz:options')
 /** Injection token for the optional {@link ResourceResolver} registered by the app. */
 export const RESOURCE_RESOLVER = Symbol.for('@dudousxd/nestjs-authz:resource-resolver');
 
+/**
+ * Injection token holding the optional resource-loader map consulted by the opt-in
+ * `POST /authz/can` endpoint to rehydrate a `{ type, id }` shim into the REAL entity
+ * instance before authorizing — so an instance-bound `@Policy` matches by constructor.
+ *
+ * Resolves to a `ResourceLoaderMap` (`Record<type, (id) => instance | Promise<instance>>`)
+ * keyed by the resource `type` name the client/codegen emits. Populated from the
+ * `resourceLoaders` forRoot option; an adapter MAY also bind this token to register
+ * loaders, mirroring the {@link PERMISSION_PROVIDER}/{@link ROLE_PROVIDER} seam.
+ *
+ * Shared via `Symbol.for(key)` (global registry) so an external package binding this
+ * same key resolves to the SAME symbol instance. Consulted with `@Optional()` — absent
+ * or empty, the endpoint behaves exactly as before (class-level / ad-hoc only).
+ */
+export const RESOURCE_HYDRATOR = Symbol.for('@dudousxd/nestjs-authz:resource-hydrator');
+
 /** Metadata key for `@Policy(Resource)` — stores the resource class on the policy. */
 export const POLICY_RESOURCE_METADATA = 'nestjs-authz:policy-resource';
 

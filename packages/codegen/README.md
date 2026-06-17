@@ -74,12 +74,20 @@ Routes carrying a `@Can` also expose a route-pinned `can()` handle member when a
 
 ## Server side
 
-> **Per-instance decisions must be hydrated, not fetched.** The fetch fallback (`POST /authz/can`)
-> only resolves **class-level abilities and ad-hoc gates** — the `{ type, id }` resource shim it
-> sends never matches a `@Policy` by constructor. A **resource-bound** ability
-> (`can('update', { type: 'Post', id })`) that misses the hydrated cache and falls through to the
-> endpoint will **deny** (and logs a one-time `console.warn`). Hydrate per-instance decisions via
-> shared props / `authorizeResource` (tiers 1-2 of `@dudousxd/nestjs-authz-inertia`) instead.
+> **Per-instance decisions: hydrate, or register a resource loader.** The fetch fallback
+> (`POST /authz/can`) receives a `{ type, id }` shim whose constructor is `Object`, so by default
+> it only resolves **class-level abilities and ad-hoc gates** — a **resource-bound** ability
+> (`can('update', { type: 'Post', id })`) that misses the hydrated cache and reaches the endpoint
+> will **deny**. Two ways to make per-instance decisions resolve there:
+>
+> 1. **Hydrate (preferred, no request):** shared props / `authorizeResource` (tiers 1-2 of
+>    `@dudousxd/nestjs-authz-inertia`).
+> 2. **Register `resourceLoaders` in core** so the endpoint rehydrates `{ type, id }` into the real
+>    entity before authorizing:
+>    `AuthzModule.forRoot({ canEndpoint: true, resourceLoaders: { Post: (id) => postRepo.findOneBy({ id: Number(id) }) } })`.
+>    With a loader registered the instance `@Policy` matches by constructor and decides correctly
+>    (a loader returning nullish → deny / not found). Without a loader for the `type`, the prior
+>    class-level-only behavior stands.
 
 The runtime `can()` POSTs `{ ability, resource? }` to the configured `endpoint` and expects
 `{ allowed: boolean }` back. Expose a tiny controller in your NestJS app that delegates to the

@@ -1,10 +1,17 @@
 import { ForbiddenException, Inject, Injectable, Optional, type Type } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type { ContextAccessor, UserRef } from './context-accessor.js';
+import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js';
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
 import type { PermissionProvider } from './permission-provider.js';
 import { PolicyRegistry } from './policy-registry.js';
-import { AUTHZ_MODULE_OPTIONS, CONTEXT_ACCESSOR, PERMISSION_PROVIDER } from './tokens.js';
+import { type RoleProvider, type RoleResolver, defaultRoleResolver } from './role-provider.js';
+import {
+  AUTHZ_MODULE_OPTIONS,
+  CONTEXT_ACCESSOR,
+  PERMISSION_PROVIDER,
+  ROLE_PROVIDER,
+} from './tokens.js';
 import type {
   AuthzModuleOptions,
   GateFn,
@@ -36,6 +43,7 @@ export class Gate {
   private readonly gates = new Map<string, GateFn>();
   private readonly superAdmin: SuperAdminHook | undefined;
   private readonly resolveUser: AuthzModuleOptions['resolveUser'];
+  private readonly roleResolver: RoleResolver;
 
   constructor(
     private readonly policies: PolicyRegistry,
@@ -50,9 +58,13 @@ export class Gate {
     @Optional()
     @Inject(PERMISSION_PROVIDER)
     private readonly permissionProvider?: PermissionProvider,
+    @Optional()
+    @Inject(ROLE_PROVIDER)
+    private readonly roleProvider?: RoleProvider,
   ) {
     this.superAdmin = options?.superAdmin;
     this.resolveUser = options?.resolveUser;
+    this.roleResolver = options?.resolveRoles ?? defaultRoleResolver;
   }
 
   /**
@@ -85,6 +97,21 @@ export class Gate {
     }
   }
 
+  /**
+   * Locate the optional {@link RoleProvider} (the coarse role seam). Prefers the value
+   * injected into this module; falls back to a non-strict {@link ModuleRef} lookup so a
+   * provider registered by ANY module (e.g. the RBAC adapter's global module) is found.
+   */
+  private resolveRoleProvider(): RoleProvider | undefined {
+    if (this.roleProvider) return this.roleProvider;
+    if (!this.moduleRef) return undefined;
+    try {
+      return this.moduleRef.get<RoleProvider>(ROLE_PROVIDER, { strict: false });
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Register an ad-hoc, model-less gate resolved by `ability` name. */
   define(ability: string, fn: GateFn): this {
     this.gates.set(ability, fn);
@@ -94,6 +121,15 @@ export class Gate {
   /** True when an ad-hoc gate is registered for `ability`. */
   hasGate(ability: string): boolean {
     return this.gates.has(ability);
+  }
+
+  /**
+   * Names of every ad-hoc gate registered via {@link define}. Used by integrations
+   * (e.g. `@dudousxd/nestjs-authz-inertia`) that enumerate the user's class-level
+   * abilities to share them as Inertia props — no network round-trip needed.
+   */
+  gateNames(): string[] {
+    return [...this.gates.keys()];
   }
 
   /**
@@ -143,6 +179,18 @@ export class Gate {
     }
   }
 
+  // --- coarse role checks (operate on the current/context user) ---
+
+  /** True when the current user holds `role`. */
+  async hasRole(role: string): Promise<boolean> {
+    return this.checkRoles(await this.currentUser(), [role]);
+  }
+
+  /** True when the current user holds ANY of `roles`. */
+  async hasAnyRole(roles: string[]): Promise<boolean> {
+    return this.checkRoles(await this.currentUser(), roles);
+  }
+
   // --- internal: used by BoundGate too ---
 
   /** @internal */
@@ -150,17 +198,78 @@ export class Gate {
     return this.check(user, ability, resource);
   }
 
+  /** @internal */
+  hasAnyRoleForUser(user: MaybeUser, roles: string[]): Promise<boolean> {
+    return this.checkRoles(user, roles);
+  }
+
+  /**
+   * Resolve the user's effective roles and test membership against `roles`. Returns
+   * `false` for an anonymous (NO_USER) caller and whenever no source yields a role
+   * (deny-by-default). Roles come from the UNION of the default/overridden
+   * {@link RoleResolver} (reads the user object) and the optional {@link RoleProvider}
+   * seam (a persisted store) — so an app needs neither to opt in.
+   */
+  private async checkRoles(maybeUser: MaybeUser, roles: string[]): Promise<boolean> {
+    if (maybeUser === NO_USER || roles.length === 0) return false;
+    const userRoles = await this.rolesOf(maybeUser);
+    if (userRoles.size === 0) return false;
+    return roles.some((r) => userRoles.has(r));
+  }
+
+  /** The current user's effective role names (resolver ∪ provider). */
+  private async rolesOf(user: User): Promise<Set<string>> {
+    const out = new Set<string>();
+    const fromResolver = await this.roleResolver(user);
+    if (Array.isArray(fromResolver)) {
+      for (const r of fromResolver) if (typeof r === 'string') out.add(r);
+    }
+    const provider = this.resolveRoleProvider();
+    if (provider) {
+      const fromProvider = await provider.getRoles(user);
+      if (Array.isArray(fromProvider)) {
+        for (const r of fromProvider) if (typeof r === 'string') out.add(r);
+      }
+    }
+    return out;
+  }
+
   private async check(
     maybeUser: MaybeUser,
     ability: string,
     resource?: Resource,
   ): Promise<boolean> {
+    const { allowed, reason } = await this.resolve(maybeUser, ability, resource);
+    // Emit the decision for observers (e.g. the telescope authorization watcher).
+    // Loosely coupled via a diagnostics channel — zero-overhead when no subscriber,
+    // and a publish failure can never affect the verdict. Only reached decisions are
+    // emitted; an unresolved/ambiguous ability throws above and is intentionally silent.
+    publishAuthzDecision(
+      ability,
+      allowed,
+      reason,
+      maybeUser === NO_USER ? undefined : maybeUser,
+      resource,
+    );
+    return allowed;
+  }
+
+  /**
+   * Resolve an ability to a verdict plus the path that decided it. Throws
+   * {@link AbilityNotResolvedException}/{@link AmbiguousAbilityException} when no
+   * decision can be reached (those paths emit no decision).
+   */
+  private async resolve(
+    maybeUser: MaybeUser,
+    ability: string,
+    resource?: Resource,
+  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason }> {
     const user: User = maybeUser === NO_USER ? undefined : maybeUser;
 
     // Global super-admin hook first.
     const sa = await this.superAdmin?.(user, ability);
-    if (sa === true) return true;
-    if (sa === false) return false;
+    if (sa === true) return { allowed: true, reason: 'super-admin' };
+    if (sa === false) return { allowed: false, reason: 'super-admin' };
 
     // RBAC seam (Laravel/spatie `Gate::before` grant): if a PermissionProvider is
     // registered and the (authenticated) user holds the named permission, grant it.
@@ -170,7 +279,7 @@ export class Gate {
       const provider = this.resolvePermissionProvider();
       if (provider) {
         const granted = await provider.hasPermission(user, ability, resource);
-        if (granted === true) return true;
+        if (granted === true) return { allowed: true, reason: 'permission-provider' };
       }
     }
 
@@ -185,20 +294,23 @@ export class Gate {
         const before = (policy as PolicyInstance).before as PolicyBeforeHook | undefined;
         if (typeof before === 'function') {
           const result = await before.call(policy, user, ability);
-          if (result === true) return true;
-          if (result === false) return false;
+          if (result === true) return { allowed: true, reason: 'policy-before' };
+          if (result === false) return { allowed: false, reason: 'policy-before' };
         }
         // Anonymous users are denied unless a hook granted access above.
-        if (maybeUser === NO_USER) return false;
-        return Boolean(await (method as (...a: unknown[]) => unknown).call(policy, user, resource));
+        if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
+        const allowed = Boolean(
+          await (method as (...a: unknown[]) => unknown).call(policy, user, resource),
+        );
+        return { allowed, reason: 'policy' };
       }
     }
 
     // Fall back to an ad-hoc gate.
     const gate = this.gates.get(ability);
     if (gate) {
-      if (maybeUser === NO_USER) return false;
-      return Boolean(await gate(user, resource));
+      if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
+      return { allowed: Boolean(await gate(user, resource)), reason: 'gate' };
     }
 
     throw new AbilityNotResolvedException(ability);
@@ -251,5 +363,15 @@ export class BoundGate {
     if (!(await this.allows(ability, resource))) {
       throw new ForbiddenException(`Unauthorized: ${ability}`);
     }
+  }
+
+  /** True when the bound user holds `role`. */
+  hasRole(role: string): Promise<boolean> {
+    return this.gate.hasAnyRoleForUser(this.user, [role]);
+  }
+
+  /** True when the bound user holds ANY of `roles`. */
+  hasAnyRole(roles: string[]): Promise<boolean> {
+    return this.gate.hasAnyRoleForUser(this.user, roles);
   }
 }

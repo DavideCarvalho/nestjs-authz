@@ -17,6 +17,8 @@ import type { Resource, User } from './types.js';
  *
  * `userRef` is the current user (whatever the app's auth layer produced; `undefined`
  * when anonymous). `permission` is the ability name passed to `gate.allows(...)`.
+ * `resource` is the dispatch target, when one was given; providers MAY ignore it —
+ * model-less, named-ability grants (e.g. the typeorm RBAC adapter) do.
  */
 export interface PermissionProvider {
   hasPermission(

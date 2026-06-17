@@ -80,6 +80,18 @@ describe('policy method dispatch', () => {
   });
 });
 
+describe('PolicyRegistry.classAbilities — only resource-free (arity <= 1) methods', () => {
+  it('shares class-level abilities and excludes instance methods (arity >= 2)', () => {
+    const { registry } = makeGate();
+    const [{ resource, abilities }] = registry.classAbilities();
+    expect(resource).toBe(Post);
+    // create(user) is class-level; update(user, post) / view(user, post) are not.
+    expect(abilities).toContain('create');
+    expect(abilities).not.toContain('update');
+    expect(abilities).not.toContain('view');
+  });
+});
+
 // --- P6: class-level ability with no resource must not silently pick a policy by Map order ---
 
 describe('class-level ability resolution (no resource)', () => {

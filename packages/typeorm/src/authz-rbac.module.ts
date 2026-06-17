@@ -1,4 +1,9 @@
-import { PERMISSION_PROVIDER, type PermissionProvider } from '@dudousxd/nestjs-authz';
+import {
+  PERMISSION_PROVIDER,
+  type PermissionProvider,
+  ROLE_PROVIDER,
+  type RoleProvider,
+} from '@dudousxd/nestjs-authz';
 import {
   type DynamicModule,
   Inject,
@@ -63,11 +68,33 @@ export function defaultUserRefMapper(user: unknown): UserRef | undefined {
 class RbacPermissionProvider implements PermissionProvider {
   constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
 
+  // The core `PermissionProvider` interface passes an optional `resource` (3rd
+  // arg); it is intentionally ignored here. RBAC grants are model-less,
+  // named-ability grants (the Laravel/spatie `Gate::before` grant), so the
+  // verdict never depends on a specific resource instance.
   async hasPermission(user: unknown, permission: string): Promise<boolean | undefined> {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
     return this.options.store.userHasPermission(ref, permission);
+  }
+}
+
+/**
+ * The RBAC {@link RoleProvider} the Gate consults (via the shared {@link ROLE_PROVIDER}
+ * token) for coarse role-checks (`gate.hasRole('teacher')`, `@Roles('admin')`). Returns
+ * the role names the current user holds in the persisted store. Core unions these with
+ * any roles read off the user object by the default `RoleResolver`.
+ */
+@Injectable()
+class RbacRoleProvider implements RoleProvider {
+  constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
+
+  async getRoles(user: unknown): Promise<string[] | undefined> {
+    const map = this.options.userRefFrom ?? defaultUserRefMapper;
+    const ref = map(user);
+    if (ref === undefined) return undefined;
+    return this.options.store.getRolesForUser(ref);
   }
 }
 
@@ -103,7 +130,7 @@ export class AuthzRbacModule {
         { provide: AUTHZ_RBAC_STORE, useValue: options.store },
         ...AuthzRbacModule.commonProviders(),
       ],
-      exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER],
+      exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
 
@@ -125,7 +152,7 @@ export class AuthzRbacModule {
         },
         ...AuthzRbacModule.commonProviders(),
       ],
-      exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER],
+      exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
 
@@ -133,6 +160,8 @@ export class AuthzRbacModule {
     return [
       RbacPermissionProvider,
       { provide: PERMISSION_PROVIDER, useExisting: RbacPermissionProvider },
+      RbacRoleProvider,
+      { provide: ROLE_PROVIDER, useExisting: RbacRoleProvider },
       AuthzRbacBootstrap,
     ];
   }

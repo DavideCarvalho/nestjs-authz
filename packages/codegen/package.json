@@ -1,0 +1,51 @@
+{
+  "name": "@dudousxd/nestjs-authz-codegen",
+  "version": "0.0.0",
+  "description": "nestjs-codegen extension for @dudousxd/nestjs-authz — discovers @Can abilities and emits a typed can() into your generated client.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavideCarvalho/nestjs-authz.git",
+    "directory": "packages/codegen"
+  },
+  "author": "Davi Carvalho <davi@goflip.ai>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist/", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@dudousxd/nestjs-authz": ">=0.2.0",
+    "@dudousxd/nestjs-authz-client": ">=0.0.0",
+    "@dudousxd/nestjs-codegen": ">=0.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@dudousxd/nestjs-authz-client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dudousxd/nestjs-authz": "workspace:^",
+    "@dudousxd/nestjs-authz-client": "workspace:^",
+    "@dudousxd/nestjs-codegen": "0.4.0",
+    "ts-morph": "^28.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["nestjs", "authorization", "authz", "codegen", "extension", "can", "policy"]
+}

@@ -43,4 +43,47 @@ export class PolicyRegistry {
   all(): PolicyInstance[] {
     return [...this.byResource.values()];
   }
+
+  /** All registered resource classes (insertion order). */
+  resources(): Type<unknown>[] {
+    return [...this.byResource.keys()];
+  }
+
+  /**
+   * Enumerate the CLASS-LEVEL ability method names declared on each registered
+   * policy, keyed by resource class. Used by integrations that pre-resolve a
+   * user's class-level abilities (e.g. to share them as Inertia props).
+   *
+   * Walks the policy prototype chain and collects own function-valued members,
+   * excluding `constructor` and the reserved `before` hook. Inherited Object
+   * members are skipped.
+   *
+   * Only methods that take NO resource instance are included — heuristically,
+   * arity `<= 1` (just `user`, e.g. `create(user)` / `viewAny(user)`). An
+   * instance method like `update(user, post)` is excluded: dispatching it
+   * against the resource CLASS would call it with the class constructor as
+   * `post` and write a bogus class-level verdict.
+   */
+  classAbilities(): Array<{ resource: Type<unknown>; abilities: string[] }> {
+    const out: Array<{ resource: Type<unknown>; abilities: string[] }> = [];
+    for (const [resource, policy] of this.byResource) {
+      const abilities = new Set<string>();
+      let proto: object | null = Object.getPrototypeOf(policy);
+      while (proto && proto !== Object.prototype) {
+        for (const name of Object.getOwnPropertyNames(proto)) {
+          if (name === 'constructor' || name === 'before') continue;
+          const member = (policy as Record<string, unknown>)[name];
+          // Class-level abilities take only `user` (arity <= 1). A method that
+          // also declares a resource param (arity >= 2) is instance-scoped and
+          // must not be dispatched against the class.
+          if (typeof member === 'function' && member.length <= 1) {
+            abilities.add(name);
+          }
+        }
+        proto = Object.getPrototypeOf(proto);
+      }
+      out.push({ resource, abilities: [...abilities] });
+    }
+    return out;
+  }
 }

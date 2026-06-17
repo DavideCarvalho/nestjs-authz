@@ -114,4 +114,23 @@ describe('TypeOrmAuthzStore (integration, sqlite)', () => {
 
     await moduleRef.close();
   });
+
+  it('Gate.hasRole consults persisted roles via the ROLE_PROVIDER seam', async () => {
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
+      providers: [PolicyRegistry, Gate],
+    }).compile();
+    await moduleRef.init();
+
+    const gate = moduleRef.get(Gate);
+    // The role assigned in the store is resolved for coarse `@Roles`/`hasRole` checks.
+    expect(await gate.forUser({ type: 'user', id: 42 }).hasRole('editor')).toBe(true);
+    expect(await gate.forUser({ type: 'user', id: 42 }).hasAnyRole(['admin', 'editor'])).toBe(true);
+    // A user without the role is denied.
+    expect(await gate.forUser({ type: 'user', id: 99 }).hasRole('editor')).toBe(false);
+
+    await moduleRef.close();
+  });
 });

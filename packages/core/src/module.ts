@@ -9,9 +9,11 @@ import {
   type Type,
 } from '@nestjs/common';
 import { APP_GUARD, DiscoveryModule, DiscoveryService, ModuleRef } from '@nestjs/core';
+import { DEFAULT_CAN_ENDPOINT_PATH, createCanController } from './can-endpoint.controller.js';
 import { getPolicyResource } from './decorator/policy.decorator.js';
 import { Gate } from './gate.js';
 import { CanGuard } from './guard/can.guard.js';
+import { RolesGuard } from './guard/roles.guard.js';
 import { PolicyRegistry } from './policy-registry.js';
 import { IdParamResourceResolver, type ResourceResolver } from './resource-resolver.js';
 import { AUTHZ_MODULE_OPTIONS, RESOURCE_RESOLVER } from './tokens.js';
@@ -95,6 +97,7 @@ export class AuthzModule {
       module: AuthzModule,
       global: true,
       imports: [DiscoveryModule],
+      controllers: AuthzModule.canControllers(options.canEndpoint),
       providers: [
         { provide: AUTHZ_MODULE_OPTIONS, useValue: options },
         ...policyProviders,
@@ -102,6 +105,8 @@ export class AuthzModule {
         Gate,
         CanGuard,
         { provide: APP_GUARD, useExisting: CanGuard },
+        RolesGuard,
+        { provide: APP_GUARD, useExisting: RolesGuard },
         ...AuthzModule.resourceResolverProviders(),
         ...AuthzModule.bootstrapProviders(),
       ],
@@ -109,6 +114,7 @@ export class AuthzModule {
         Gate,
         PolicyRegistry,
         CanGuard,
+        RolesGuard,
         AUTHZ_MODULE_OPTIONS,
         RESOURCE_RESOLVER,
         ...(options.policies ?? []),
@@ -123,16 +129,26 @@ export class AuthzModule {
       module: AuthzModule,
       global: true,
       imports: [DiscoveryModule, ...((options.imports ?? []) as DynamicModule[])],
+      controllers: AuthzModule.canControllers(options.canEndpoint),
       providers: [
         ...asyncProviders,
         PolicyRegistry,
         Gate,
         CanGuard,
         { provide: APP_GUARD, useExisting: CanGuard },
+        RolesGuard,
+        { provide: APP_GUARD, useExisting: RolesGuard },
         ...AuthzModule.resourceResolverProviders(),
         ...AuthzModule.bootstrapProviders(),
       ],
-      exports: [Gate, PolicyRegistry, CanGuard, AUTHZ_MODULE_OPTIONS, RESOURCE_RESOLVER],
+      exports: [
+        Gate,
+        PolicyRegistry,
+        CanGuard,
+        RolesGuard,
+        AUTHZ_MODULE_OPTIONS,
+        RESOURCE_RESOLVER,
+      ],
     };
   }
 
@@ -159,6 +175,16 @@ export class AuthzModule {
    */
   private static bootstrapProviders(): Provider[] {
     return [AuthzPolicyBootstrap];
+  }
+
+  /**
+   * Build the opt-in `POST /authz/can` fallback controller (or none). Off by
+   * default; `true` mounts at the default path, a string mounts at that path.
+   */
+  private static canControllers(canEndpoint: boolean | string | undefined): Type<unknown>[] {
+    if (!canEndpoint) return [];
+    const path = typeof canEndpoint === 'string' ? canEndpoint : DEFAULT_CAN_ENDPOINT_PATH;
+    return [createCanController(path)];
   }
 
   private static buildAsyncOptionsProvider(

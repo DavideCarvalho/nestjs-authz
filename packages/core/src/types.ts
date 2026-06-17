@@ -84,6 +84,19 @@ export interface AuthzModuleOptions {
    */
   resolveUser?: (ref: UserRef) => User | undefined | Promise<User | undefined>;
   /**
+   * Override the default {@link RoleResolver} used by coarse role-checks
+   * (`gate.hasRole('teacher')`, `@Roles('admin')`). The default reads `user.roles`
+   * (`string[]`) OR `user.role` (`string | string[]`) off the user object, so
+   * role-checks work with ZERO RBAC tables. Provide this to derive roles from a
+   * different shape. When the optional `ROLE_PROVIDER` seam is ALSO registered, the
+   * Gate unions both sources' roles.
+   *
+   * On the context path the resolver receives whatever the context produced (the
+   * raw {@link UserRef} unless `resolveUser` hydrated the entity); on the explicit
+   * `gate.forUser(entity)` path it receives exactly what you passed.
+   */
+  resolveRoles?: (user: User) => string[] | undefined | Promise<string[] | undefined>;
+  /**
    * Override the default {@link ResourceResolver} used to load an instance for
    * `@Can(ability, Resource)` routes. Defaults to {@link IdParamResourceResolver}
    * (reads the route `:id` param), registered automatically by `forRoot`. Apps
@@ -97,6 +110,20 @@ export interface AuthzModuleOptions {
    * is supplied.
    */
   idParam?: string;
+  /**
+   * Opt-in `POST /authz/can` fallback endpoint. **Off by default.** When enabled,
+   * registers a controller that runs `gate.allows(ability, resource?)` for the
+   * current (context) user and returns `{ allowed: boolean }`. This is the
+   * last-resort path the codegen-emitted `can()` helper targets.
+   *
+   * - `true` → mount at the default path `authz/can`.
+   * - `string` → mount at that path (e.g. `'api/authz/can'`).
+   * - `false`/omitted → no endpoint is registered.
+   *
+   * Prefer the no-request paths (shared Inertia props, per-resource `can` maps)
+   * — this endpoint exists only for abilities not already hydrated on the client.
+   */
+  canEndpoint?: boolean | string;
 }
 
 export interface AuthzModuleOptionsFactory {
@@ -109,4 +136,10 @@ export interface AuthzModuleAsyncOptions {
   useClass?: Type<AuthzModuleOptionsFactory>;
   useFactory?: (...args: unknown[]) => Promise<AuthzModuleOptions> | AuthzModuleOptions;
   inject?: unknown[];
+  /**
+   * Opt-in `POST /authz/can` fallback endpoint (see {@link AuthzModuleOptions.canEndpoint}).
+   * Declared statically here because controllers are registered at module-definition
+   * time, before the async options factory resolves. Off by default.
+   */
+  canEndpoint?: boolean | string;
 }

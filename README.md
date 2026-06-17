@@ -1,3 +1,16 @@
+<p align="center">
+  <a href="https://davidecarvalho.github.io/aviary/docs/authz">
+    <img src="./.github/banner.svg" alt="@dudousxd/nestjs-authz — an Aviary library. Call sign: Falcon.">
+  </a>
+</p>
+
+<p align="center">
+  <b><a href="https://davidecarvalho.github.io/aviary/docs/authz">📖 Read the documentation</a></b>
+  &nbsp;·&nbsp; part of the <a href="https://davidecarvalho.github.io/aviary/"><b>Aviary</b></a> ecosystem for NestJS
+</p>
+
+---
+
 # `@dudousxd/nestjs-authz`
 
 NestJS authorization in the Laravel Gate/Policy idiom. **Authorization, not authentication** — it reads the current user (from [`@dudousxd/nestjs-context`](https://github.com/DavideCarvalho/nestjs-context) or passed explicitly) and decides what they may do. Core has **zero database** dependencies; persisted RBAC ships as a separate opt-in adapter.

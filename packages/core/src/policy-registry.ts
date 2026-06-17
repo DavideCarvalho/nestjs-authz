@@ -11,6 +11,10 @@ import type { PolicyInstance } from './types.js';
 export class PolicyRegistry {
   private readonly byResource = new Map<Type<unknown>, PolicyInstance>();
 
+  // Cache for classAbilities(): the result is static after registration, so it
+  // is computed lazily once and invalidated whenever a policy is registered.
+  private classAbilitiesCache: Array<{ resource: Type<unknown>; abilities: string[] }> | undefined;
+
   /**
    * Register a policy instance. Throws if the instance's class was not decorated
    * with `@Policy(Resource)`.
@@ -22,6 +26,7 @@ export class PolicyRegistry {
       throw new PolicyNotDecoratedException(name);
     }
     this.byResource.set(resource, policy);
+    this.classAbilitiesCache = undefined;
   }
 
   /** Resolve the policy instance for a resource class, or `undefined`. */
@@ -65,6 +70,10 @@ export class PolicyRegistry {
    * `post` and write a bogus class-level verdict.
    */
   classAbilities(): Array<{ resource: Type<unknown>; abilities: string[] }> {
+    return (this.classAbilitiesCache ??= this.computeClassAbilities());
+  }
+
+  private computeClassAbilities(): Array<{ resource: Type<unknown>; abilities: string[] }> {
     const out: Array<{ resource: Type<unknown>; abilities: string[] }> = [];
     for (const [resource, policy] of this.byResource) {
       const abilities = new Set<string>();

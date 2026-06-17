@@ -45,6 +45,16 @@ export class Gate {
   private readonly resolveUser: AuthzModuleOptions['resolveUser'];
   private readonly roleResolver: RoleResolver;
 
+  // Memoized ModuleRef seam lookups. These tokens are singletons bound once at
+  // module init, so the (potentially throwing) non-strict container scan only
+  // needs to run once per seam — never on every authorization check.
+  private contextResolved = false;
+  private contextCached: ContextAccessor | undefined;
+  private permissionProviderResolved = false;
+  private permissionProviderCached: PermissionProvider | undefined;
+  private roleProviderResolved = false;
+  private roleProviderCached: RoleProvider | undefined;
+
   constructor(
     private readonly policies: PolicyRegistry,
     @Optional()
@@ -74,12 +84,15 @@ export class Gate {
    */
   private resolveContext(): ContextAccessor | undefined {
     if (this.context) return this.context;
-    if (!this.moduleRef) return undefined;
+    if (this.contextResolved) return this.contextCached;
+    this.contextResolved = true;
+    if (!this.moduleRef) return this.contextCached;
     try {
-      return this.moduleRef.get<ContextAccessor>(CONTEXT_ACCESSOR, { strict: false });
+      this.contextCached = this.moduleRef.get<ContextAccessor>(CONTEXT_ACCESSOR, { strict: false });
     } catch {
-      return undefined;
+      this.contextCached = undefined;
     }
+    return this.contextCached;
   }
 
   /**
@@ -89,12 +102,17 @@ export class Gate {
    */
   private resolvePermissionProvider(): PermissionProvider | undefined {
     if (this.permissionProvider) return this.permissionProvider;
-    if (!this.moduleRef) return undefined;
+    if (this.permissionProviderResolved) return this.permissionProviderCached;
+    this.permissionProviderResolved = true;
+    if (!this.moduleRef) return this.permissionProviderCached;
     try {
-      return this.moduleRef.get<PermissionProvider>(PERMISSION_PROVIDER, { strict: false });
+      this.permissionProviderCached = this.moduleRef.get<PermissionProvider>(PERMISSION_PROVIDER, {
+        strict: false,
+      });
     } catch {
-      return undefined;
+      this.permissionProviderCached = undefined;
     }
+    return this.permissionProviderCached;
   }
 
   /**
@@ -104,12 +122,15 @@ export class Gate {
    */
   private resolveRoleProvider(): RoleProvider | undefined {
     if (this.roleProvider) return this.roleProvider;
-    if (!this.moduleRef) return undefined;
+    if (this.roleProviderResolved) return this.roleProviderCached;
+    this.roleProviderResolved = true;
+    if (!this.moduleRef) return this.roleProviderCached;
     try {
-      return this.moduleRef.get<RoleProvider>(ROLE_PROVIDER, { strict: false });
+      this.roleProviderCached = this.moduleRef.get<RoleProvider>(ROLE_PROVIDER, { strict: false });
     } catch {
-      return undefined;
+      this.roleProviderCached = undefined;
     }
+    return this.roleProviderCached;
   }
 
   /** Register an ad-hoc, model-less gate resolved by `ability` name. */

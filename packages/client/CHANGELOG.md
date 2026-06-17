@@ -1,5 +1,14 @@
 # @dudousxd/nestjs-authz-client
 
+## 0.1.1
+
+### Patch Changes
+
+- [#4](https://github.com/DavideCarvalho/nestjs-authz/pull/4) [`8b7711d`](https://github.com/DavideCarvalho/nestjs-authz/commit/8b7711d11bdb25b3407fea742f6c1158afb36296) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Soften the resource-bound fetch-fallback `console.warn` and docstrings: a per-instance
+  `can(ability, { type, id })` cache miss under `fallback: 'fetch'` now resolves on the server
+  when the app registered a matching `resourceLoaders` entry for that `type` (core feature) —
+  it only denies when neither tier-1/2 hydration nor a loader covers it.
+
 ## 0.1.0
 
 ### Minor Changes

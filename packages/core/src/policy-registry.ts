@@ -70,7 +70,10 @@ export class PolicyRegistry {
    * `post` and write a bogus class-level verdict.
    */
   classAbilities(): Array<{ resource: Type<unknown>; abilities: string[] }> {
-    return (this.classAbilitiesCache ??= this.computeClassAbilities());
+    if (this.classAbilitiesCache === undefined) {
+      this.classAbilitiesCache = this.computeClassAbilities();
+    }
+    return this.classAbilitiesCache;
   }
 
   private computeClassAbilities(): Array<{ resource: Type<unknown>; abilities: string[] }> {

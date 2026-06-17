@@ -1,5 +1,15 @@
 # @dudousxd/nestjs-authz-typeorm
 
+## 0.2.1
+
+### Patch Changes
+
+- [#2](https://github.com/DavideCarvalho/nestjs-authz/pull/2) [`2ecb0f4`](https://github.com/DavideCarvalho/nestjs-authz/commit/2ecb0f46342fa4527fc01f1097720f2e7bcf9aa7) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `AuthzRbacModule` now registers a `RoleProvider` under the core `ROLE_PROVIDER` token
+  that returns `store.getRolesForUser(...)`, so coarse role checks (`gate.hasRole('teacher')`,
+  `@Roles('admin')`) consult the persisted RBAC store too — mirroring the existing
+  `PERMISSION_PROVIDER` wiring. Roles from the store are unioned with any read off the user
+  object by core's default resolver.
+
 ## 0.2.0
 
 ### Minor Changes

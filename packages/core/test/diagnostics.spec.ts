@@ -1,21 +1,25 @@
 import 'reflect-metadata';
 import diagnostics_channel from 'node:diagnostics_channel';
+import { type DiagnosticEvent, channelName } from '@dudousxd/nestjs-diagnostics';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AUTHZ_DECISION_CHANNEL, type AuthzDecisionDiagnostic } from '../src/diagnostics.js';
+import type { AuthzDecisionDiagnostic } from '../src/diagnostics.js';
 import { Gate } from '../src/gate.js';
 import { PolicyRegistry } from '../src/policy-registry.js';
+
+/** The standard aviary channel authz emits decisions on: `aviary:authz:decision`. */
+const DECISION_CHANNEL = channelName('authz', 'decision');
 
 function makeGate(): Gate {
   return new Gate(new PolicyRegistry(), {}, undefined);
 }
 
-/** Subscribe to the decision channel for the duration of a test; returns captured payloads. */
-function captureDecisions(): { decisions: AuthzDecisionDiagnostic[]; stop: () => void } {
-  const decisions: AuthzDecisionDiagnostic[] = [];
-  const channel = diagnostics_channel.channel(AUTHZ_DECISION_CHANNEL);
-  const onMessage = (msg: unknown) => decisions.push(msg as AuthzDecisionDiagnostic);
+/** Subscribe to the decision channel for the duration of a test; returns captured envelopes. */
+function captureDecisions(): { envelopes: DiagnosticEvent[]; stop: () => void } {
+  const envelopes: DiagnosticEvent[] = [];
+  const channel = diagnostics_channel.channel(DECISION_CHANNEL);
+  const onMessage = (msg: unknown) => envelopes.push(msg as DiagnosticEvent);
   channel.subscribe(onMessage);
-  return { decisions, stop: () => channel.unsubscribe(onMessage) };
+  return { envelopes, stop: () => channel.unsubscribe(onMessage) };
 }
 
 describe('authz decision diagnostics channel', () => {
@@ -25,7 +29,7 @@ describe('authz decision diagnostics channel', () => {
     stop = undefined;
   });
 
-  it('publishes a payload on an allow', async () => {
+  it('publishes an aviary envelope on an allow', async () => {
     const gate = makeGate();
     gate.define('access-admin', (user) => (user as { role?: string }).role === 'staff');
     const cap = captureDecisions();
@@ -36,8 +40,11 @@ describe('authz decision diagnostics channel', () => {
       .allows('access-admin');
 
     expect(allowed).toBe(true);
-    expect(cap.decisions).toHaveLength(1);
-    expect(cap.decisions[0]).toMatchObject({
+    expect(cap.envelopes).toHaveLength(1);
+    // Wire contract: the standard envelope wraps the authz payload.
+    expect(cap.envelopes[0]).toMatchObject({ lib: 'authz', event: 'decision' });
+    expect(typeof cap.envelopes[0]?.ts).toBe('number');
+    expect(cap.envelopes[0]?.payload).toMatchObject({
       v: 1,
       ability: 'access-admin',
       allowed: true,
@@ -45,7 +52,7 @@ describe('authz decision diagnostics channel', () => {
       userRef: 'User#7',
       resourceType: null,
       resourceId: null,
-    });
+    } satisfies AuthzDecisionDiagnostic);
   });
 
   it('publishes a payload on a deny', async () => {
@@ -57,8 +64,8 @@ describe('authz decision diagnostics channel', () => {
     const allowed = await gate.forUser({ id: 1 }).allows('publish');
 
     expect(allowed).toBe(false);
-    expect(cap.decisions).toHaveLength(1);
-    expect(cap.decisions[0]).toMatchObject({
+    expect(cap.envelopes).toHaveLength(1);
+    expect(cap.envelopes[0]?.payload).toMatchObject({
       ability: 'publish',
       allowed: false,
       reason: 'gate',
@@ -71,6 +78,6 @@ describe('authz decision diagnostics channel', () => {
     stop = cap.stop;
 
     await expect(gate.forUser({}).allows('unknown')).rejects.toThrow();
-    expect(cap.decisions).toHaveLength(0);
+    expect(cap.envelopes).toHaveLength(0);
   });
 });

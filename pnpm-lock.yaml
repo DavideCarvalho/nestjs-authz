@@ -64,6 +64,10 @@ importers:
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)
 
   packages/core:
+    dependencies:
+      '@dudousxd/nestjs-diagnostics':
+        specifier: ^0.2.0
+        version: 0.2.0
     devDependencies:
       '@nestjs/common':
         specifier: ^11.0.0
@@ -235,27 +239,6 @@ importers:
       react-dom:
         specifier: ^18.3.0
         version: 18.3.1(react@18.3.1)
-      typescript:
-        specifier: ^5.4.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)
-
-  packages/telescope:
-    devDependencies:
-      '@dudousxd/nestjs-authz':
-        specifier: workspace:^
-        version: link:../core
-      '@dudousxd/nestjs-telescope':
-        specifier: 1.8.0
-        version: 1.8.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@dudousxd/nestjs-telescope-testing':
-        specifier: 1.8.0
-        version: 1.8.0(@dudousxd/nestjs-telescope@1.8.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))
-      '@types/node':
-        specifier: ^20.0.0
-        version: 20.19.43
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -475,6 +458,10 @@ packages:
       tsx:
         optional: true
 
+  '@dudousxd/nestjs-diagnostics@0.2.0':
+    resolution: {integrity: sha512-2jGsifkiX/6k5KJEy/fStZk4qGl+xF3kx+R/2erqcA24Cj8hiHfAFBicMHCl5qnDVice2o+JPr7sXtLcvOtg4g==}
+    engines: {node: '>=20'}
+
   '@dudousxd/nestjs-inertia@1.5.0':
     resolution: {integrity: sha512-0HHdmDH2nnz8cx/I/AtkMbvtnJ616ESCO4ZDVo0HVEfHiwqQJK4jnqkKMrinRwvwV8YhJ7xOZ2xyvZ3NPa3jEQ==}
     engines: {node: '>=20'}
@@ -514,21 +501,6 @@ packages:
         optional: true
       pug:
         optional: true
-
-  '@dudousxd/nestjs-telescope-testing@1.8.0':
-    resolution: {integrity: sha512-05jq+vhAvr4pW1VvN33g9Zan7r3es2uDC5wb9gV7G9JPlxDt4LMnGfV04IZO+NgR0dvFTYXWBvTonLBohs7p7g==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@dudousxd/nestjs-telescope': ^1.8.0
-
-  '@dudousxd/nestjs-telescope@1.8.0':
-    resolution: {integrity: sha512-7Lt8EOrr0W/lGt2gYtglVi73ICB1UDZffucJDhG6evBUEYybxTvodlDnahPGawJKgjg6TtmSk7DHcfZf41Y/gA==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@nestjs/common': '>=10.0.0'
-      '@nestjs/core': '>=10.0.0'
-      reflect-metadata: '>=0.1.13'
-      rxjs: '>=7.0.0'
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -3220,9 +3192,6 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
 snapshots:
 
   '@asamuzakjp/css-color@3.2.0':
@@ -3468,6 +3437,8 @@ snapshots:
     optionalDependencies:
       '@nestjs/common': 11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2)
 
+  '@dudousxd/nestjs-diagnostics@0.2.0': {}
+
   '@dudousxd/nestjs-inertia@1.5.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@types/express@4.17.25)(express@4.22.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
     dependencies:
       '@nestjs/common': 11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -3477,20 +3448,6 @@ snapshots:
     optionalDependencies:
       '@types/express': 4.17.25
       express: 4.22.2
-
-  '@dudousxd/nestjs-telescope-testing@1.8.0(@dudousxd/nestjs-telescope@1.8.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))':
-    dependencies:
-      '@dudousxd/nestjs-telescope': 1.8.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
-
-  '@dudousxd/nestjs-telescope@1.8.0(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)':
-    dependencies:
-      '@nestjs/common': 11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@nestjs/core': 11.1.27(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.27)(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      better-sqlite3: 11.10.0
-      reflect-metadata: 0.2.2
-      rxjs: 7.8.2
-      uuid: 11.1.1
-      zod: 3.25.76
 
   '@esbuild/aix-ppc64@0.27.7':
     optional: true
@@ -6207,5 +6164,3 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
-
-  zod@3.25.76: {}

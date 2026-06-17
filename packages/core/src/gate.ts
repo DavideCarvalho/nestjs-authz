@@ -240,7 +240,7 @@ export class Gate {
     resource?: Resource,
   ): Promise<boolean> {
     const { allowed, reason } = await this.resolve(maybeUser, ability, resource);
-    // Emit the decision for observers (e.g. the telescope authorization watcher).
+    // Emit the decision for observers (e.g. the generic @dudousxd/nestjs-diagnostics-telescope watcher).
     // Loosely coupled via a diagnostics channel — zero-overhead when no subscriber,
     // and a publish failure can never affect the verdict. Only reached decisions are
     // emitted; an unresolved/ambiguous ability throws above and is intentionally silent.

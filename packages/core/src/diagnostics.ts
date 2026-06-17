@@ -1,19 +1,16 @@
-import diagnostics_channel from 'node:diagnostics_channel';
+import { emit, getChannel } from '@dudousxd/nestjs-diagnostics';
 import type { Resource, User } from './types.js';
 
 /**
- * Channel name — the cross-repo wire contract with `@dudousxd/nestjs-authz-telescope`'s
- * authorization watcher (and any other observer). Versioned by the payload's `v` field,
- * not by name. Keep this string byte-identical on both sides.
+ * The standard `aviary:` channel this library emits on, via the shared
+ * `@dudousxd/nestjs-diagnostics` convention. The generic
+ * `@dudousxd/nestjs-diagnostics-telescope` watcher records every decision with no
+ * authz-specific watcher needed. `getChannel` also registers the name so that
+ * generic observer can discover it. Read `.hasSubscribers` to gate work before
+ * building a payload — when nothing subscribes (the common case) emitting a
+ * decision is effectively free.
  */
-export const AUTHZ_DECISION_CHANNEL = 'nestjs-authz:decision';
-
-/**
- * Memoized by Node: the same channel object is returned for the same name. Read
- * `.hasSubscribers` to gate any work before publishing — when nothing subscribes
- * (the common case) emitting a decision is effectively free.
- */
-export const authzDecisionChannel = diagnostics_channel.channel(AUTHZ_DECISION_CHANNEL);
+export const authzDecisionChannel = getChannel('authz', 'decision');
 
 /**
  * Every authorization decision the {@link Gate} reaches, published once per
@@ -57,20 +54,18 @@ export function publishAuthzDecision(
   resource: Resource | undefined,
 ): void {
   if (!authzDecisionChannel.hasSubscribers) return;
-  try {
-    const payload: AuthzDecisionDiagnostic = {
-      v: 1,
-      ability,
-      allowed,
-      reason,
-      userRef: labelUser(user),
-      resourceType: resourceType(resource),
-      resourceId: resourceId(resource),
-    };
-    authzDecisionChannel.publish(payload);
-  } catch {
-    // Observability must never break authorization.
-  }
+  const payload: AuthzDecisionDiagnostic = {
+    v: 1,
+    ability,
+    allowed,
+    reason,
+    userRef: labelUser(user),
+    resourceType: resourceType(resource),
+    resourceId: resourceId(resource),
+  };
+  // `emit` builds the `aviary:authz:decision` envelope, auto-fills `traceId` from
+  // the optional context accessor, re-checks `hasSubscribers`, and never throws.
+  emit('authz', 'decision', payload);
 }
 
 /** A short, JSON-safe label for the user — `<type>#<id>`, a constructor name, or `null`. */

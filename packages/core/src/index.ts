@@ -1,11 +1,7 @@
 export const VERSION = '0.0.0';
 
 export { Gate, BoundGate } from './gate.js';
-export {
-  AUTHZ_DECISION_CHANNEL,
-  authzDecisionChannel,
-  publishAuthzDecision,
-} from './diagnostics.js';
+export { authzDecisionChannel, publishAuthzDecision } from './diagnostics.js';
 export type { AuthzDecisionDiagnostic, AuthzDecisionReason } from './diagnostics.js';
 export { PolicyRegistry } from './policy-registry.js';
 export { Policy, getPolicyResource } from './decorator/policy.decorator.js';

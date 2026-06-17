@@ -80,12 +80,23 @@ AuthzModule.forRoot({ canEndpoint: true }) // POST /authz/can → { allowed }
 It runs `gate.allows(ability, resource?)` for the current context user and returns
 `{ allowed }`. Off by default. This is the path the codegen-emitted `can()` targets.
 
-> **Class-level only.** The endpoint can resolve **class-level abilities and ad-hoc gates**
-> only — the `{ type, id }` resource shim it receives never matches a `@Policy` by constructor.
-> Per-instance decisions MUST be hydrated via tiers 1-2 (shared props / `authorizeResource`);
-> a **resource-bound** ability that misses the cache and falls through to `/authz/can` will
-> **deny** (and `createCan` logs a one-time `console.warn`). Treat tier 3 as a class-level /
-> ad-hoc fallback, not a per-instance one.
+> **Class-level by default; per-instance with a loader.** Out of the box the endpoint resolves
+> **class-level abilities and ad-hoc gates** only — the `{ type, id }` shim it receives never
+> matches a `@Policy` by constructor, so a **resource-bound** ability that misses the cache and
+> falls through to `/authz/can` will **deny**. To make per-instance decisions resolve at tier 3,
+> register `resourceLoaders` keyed by the resource `type`:
+>
+> ```ts
+> AuthzModule.forRoot({
+>   canEndpoint: true,
+>   resourceLoaders: { Post: (id) => postRepo.findOneBy({ id: Number(id) }) },
+> })
+> ```
+>
+> The endpoint then loads the real entity before authorizing, so the instance `@Policy` matches
+> and decides correctly (a loader returning nullish → deny / not found). Prefer hydrating via
+> tiers 1-2 (shared props / `authorizeResource`) when you can; use `resourceLoaders` for the
+> abilities that genuinely need a tier-3 round-trip.
 
 ## Client store (framework-neutral)
 
@@ -109,8 +120,9 @@ can('mystery');                           // fallback: 'deny' → false; 'fetch'
 - **Cache hit** → returns a `boolean` synchronously, never touches the network.
 - **Cache miss** → `fallback: 'deny'` (default) returns `false`; `fallback: 'fetch'`
   POSTs to the tier-3 endpoint and returns a `Promise<boolean>`. A **resource-bound**
-  miss under `'fetch'` can only deny (the endpoint resolves class-level abilities only)
-  and logs a one-time `console.warn` — hydrate per-instance decisions via tiers 1-2.
+  miss under `'fetch'` resolves on the server only if the app registered a `resourceLoaders`
+  entry for that `type`; otherwise it denies (and `createCan` logs a one-time `console.warn`)
+  — hydrate per-instance decisions via tiers 1-2 or register a loader.
 
 ## License
 

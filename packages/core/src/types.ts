@@ -42,6 +42,20 @@ export type PolicyInstance = Record<string, unknown> & {
 export type GateFn = (user: User, resource?: Resource) => boolean | Promise<boolean>;
 
 /**
+ * A resource loader: turns an `id` into the REAL entity instance for a resource
+ * `type`. Used by the opt-in `POST /authz/can` endpoint to rehydrate the client's
+ * `{ type, id }` shim before authorizing, so an instance-bound `@Policy` matches by
+ * constructor. Returning nullish signals "not found" (the endpoint denies). May be async.
+ */
+export type ResourceLoader = (id: string | number) => unknown | Promise<unknown>;
+
+/**
+ * Resource loaders keyed by the resource `type` name as emitted by the client/codegen
+ * (e.g. `'Post'`). See {@link AuthzModuleOptions.resourceLoaders}.
+ */
+export type ResourceLoaderMap = Record<string, ResourceLoader>;
+
+/**
  * Global super-admin before-hook. Runs before any policy/gate; truthy → allow.
  * `void`/`undefined`/`false` falls through to normal resolution.
  */
@@ -124,6 +138,21 @@ export interface AuthzModuleOptions {
    * — this endpoint exists only for abilities not already hydrated on the client.
    */
   canEndpoint?: boolean | string;
+  /**
+   * Resource loaders keyed by the resource `type` name the client/codegen emits
+   * (e.g. `'Post'`). They close the per-instance gap in the {@link canEndpoint}
+   * fallback: when the endpoint receives `{ ability, resource: { type, id } }` and a
+   * loader is registered for `type`, it `await`s `loader(id)` and authorizes the REAL
+   * entity — so an instance-bound `@Policy` matches by constructor and its method runs
+   * with the loaded resource. A loader returning nullish is treated as "not found"
+   * (the endpoint denies). Types WITHOUT a loader keep the prior behavior (class-level
+   * / ad-hoc only; a resource-bound ability still denies). Opt-in: unset → unchanged.
+   *
+   * ```ts
+   * resourceLoaders: { Post: (id) => postRepo.findOneBy({ id: Number(id) }) }
+   * ```
+   */
+  resourceLoaders?: ResourceLoaderMap;
 }
 
 export interface AuthzModuleOptionsFactory {
@@ -142,4 +171,11 @@ export interface AuthzModuleAsyncOptions {
    * time, before the async options factory resolves. Off by default.
    */
   canEndpoint?: boolean | string;
+  /**
+   * Resource loaders for the {@link canEndpoint} fallback
+   * (see {@link AuthzModuleOptions.resourceLoaders}). May also be returned from the
+   * async options factory; either way the endpoint reads them from the resolved
+   * options, so this declaration is for the rarer case of supplying them statically.
+   */
+  resourceLoaders?: ResourceLoaderMap;
 }

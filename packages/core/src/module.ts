@@ -16,12 +16,13 @@ import { CanGuard } from './guard/can.guard.js';
 import { RolesGuard } from './guard/roles.guard.js';
 import { PolicyRegistry } from './policy-registry.js';
 import { IdParamResourceResolver, type ResourceResolver } from './resource-resolver.js';
-import { AUTHZ_MODULE_OPTIONS, RESOURCE_RESOLVER } from './tokens.js';
+import { AUTHZ_MODULE_OPTIONS, RESOURCE_HYDRATOR, RESOURCE_RESOLVER } from './tokens.js';
 import type {
   AuthzModuleAsyncOptions,
   AuthzModuleOptions,
   AuthzModuleOptionsFactory,
   PolicyInstance,
+  ResourceLoaderMap,
 } from './types.js';
 
 /**
@@ -108,6 +109,7 @@ export class AuthzModule {
         RolesGuard,
         { provide: APP_GUARD, useExisting: RolesGuard },
         ...AuthzModule.resourceResolverProviders(),
+        ...AuthzModule.resourceHydratorProviders(),
         ...AuthzModule.bootstrapProviders(),
       ],
       exports: [
@@ -117,6 +119,7 @@ export class AuthzModule {
         RolesGuard,
         AUTHZ_MODULE_OPTIONS,
         RESOURCE_RESOLVER,
+        RESOURCE_HYDRATOR,
         ...(options.policies ?? []),
       ],
     };
@@ -139,6 +142,7 @@ export class AuthzModule {
         RolesGuard,
         { provide: APP_GUARD, useExisting: RolesGuard },
         ...AuthzModule.resourceResolverProviders(),
+        ...AuthzModule.resourceHydratorProviders(),
         ...AuthzModule.bootstrapProviders(),
       ],
       exports: [
@@ -148,6 +152,7 @@ export class AuthzModule {
         RolesGuard,
         AUTHZ_MODULE_OPTIONS,
         RESOURCE_RESOLVER,
+        RESOURCE_HYDRATOR,
       ],
     };
   }
@@ -164,6 +169,24 @@ export class AuthzModule {
         provide: RESOURCE_RESOLVER,
         useFactory: (options?: AuthzModuleOptions): ResourceResolver =>
           options?.resourceResolver ?? new IdParamResourceResolver(options?.idParam),
+        inject: [{ token: AUTHZ_MODULE_OPTIONS, optional: true }],
+      },
+    ];
+  }
+
+  /**
+   * Bind the {@link RESOURCE_HYDRATOR} token to the resolved options'
+   * `resourceLoaders` map so the opt-in `POST /authz/can` endpoint can rehydrate a
+   * `{ type, id }` shim into the REAL entity before authorizing. Reads the resolved
+   * options so the map from forRoot OR a forRootAsync factory is honored. Resolves to
+   * `undefined` when no `resourceLoaders` are configured (endpoint behavior unchanged).
+   */
+  private static resourceHydratorProviders(): Provider[] {
+    return [
+      {
+        provide: RESOURCE_HYDRATOR,
+        useFactory: (options?: AuthzModuleOptions): ResourceLoaderMap | undefined =>
+          options?.resourceLoaders,
         inject: [{ token: AUTHZ_MODULE_OPTIONS, optional: true }],
       },
     ];

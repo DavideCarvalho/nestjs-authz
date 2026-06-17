@@ -29,6 +29,7 @@ export type { RoleProvider, RoleResolver } from './role-provider.js';
 export {
   AUTHZ_MODULE_OPTIONS,
   RESOURCE_RESOLVER,
+  RESOURCE_HYDRATOR,
   CONTEXT_ACCESSOR,
   PERMISSION_PROVIDER,
   ROLE_PROVIDER,
@@ -52,6 +53,8 @@ export type {
   PolicyInstance,
   PolicyMethod,
   Resource,
+  ResourceLoader,
+  ResourceLoaderMap,
   SuperAdminHook,
   User,
 } from './types.js';

@@ -136,6 +136,106 @@ por `idParam`.
 - `@dudousxd/nestjs-authz-{typeorm,mikro-orm,prisma}` — RBAC persistido (§5)
 - `@dudousxd/nestjs-authz-{inertia,codegen,react,telescope,testing}` — colas (§6)
 
+## 8.1 Adições pós-v1 (batch, cache, direct/tenant, testing)
+
+Quatro melhorias coesas, todas backward-compatible (colunas nullable/defaulted, seams opcionais):
+
+- **Batch (`gate.allowsMany`)** — autoriza N habilidades resolvendo o user UMA vez e
+  compartilhando UM `PermissionCache` por lote (mata o N+1 de uma list page). Endpoint
+  `POST /authz/can` aceita TAMBÉM um array (`[{ability,resource?}]` → `[{...,allowed}]`),
+  e o client ganhou `createCanBatch` (faz POST só dos cache-misses, num único request).
+  O codegen emite `canBatch(...)` tipado. Comparáveis: Cerbos `CheckResources` (batch),
+  CASL não tem batch nativo.
+- **Cache de permissões por request** — memo sobre `provider.getPermissions(user)`,
+  guardado no store do nestjs-context (`Symbol.for(...request-permission-cache)`).
+  Uma busca por request; standalone (sem context) degrada para sem-memo, correção
+  intacta. Tenant é fixo por request, então a chave (user) basta.
+- **Permissões diretas + roles por tenant (typeorm)** — `giveUserPermission`/
+  `revokeUserPermission` + tabela `authz_user_permission` (spatie
+  `$user->givePermissionTo`). `assignRole(user, role, { tenantId })` escopa por tenant;
+  coluna `tenantId` é **defaulted `''`** (não nullable) para entrar na PK composta com
+  unicidade portável entre SQLite/MySQL/Postgres (`NULL` quebraria idempotência do
+  grant global). `getPermissionsForUser` = UNIÃO de role-derived (tenant-aware) +
+  diretas (não escopadas). Tenant vem do nestjs-context quando presente.
+- **`@dudousxd/nestjs-authz-testing`** — `buildGate`/`buildBoundGate` (Gate real,
+  zero DB/Nest), `expectCan`/`expectCannot` (Pundit-style matchers; `expectCannot`
+  trata ability não-resolvida como "cannot"), e `FakePermissionProvider`/
+  `FakeRoleProvider` in-memory (wildcard via o matcher do core).
+
+## 8.2 Query scoping / policy filter (`gate.scope` + `applyScope`)
+
+O diferencial ABAC para list endpoints: hoje a authz decide sim/não para UM recurso;
+para listas você ou over-fetch + filtra em memória (N+1 / risco de leak) ou escreve
+`WHERE` na mão. Agora uma policy pode declarar um **scope** (conceito `accessibleBy` do
+CASL / `policy_scope` do Pundit / `PlanResources` do Cerbos) que produz uma **constraint
+ORM-neutra**, aplicada na camada do DB.
+
+- **Representação escolhida — AST de condição (dado puro, não callback).** `ScopeConstraint`
+  = `{ kind: 'all' }` (allow-all) | `{ kind: 'none' }` (deny-all) |
+  `{ kind: 'condition', field, op, value }` | `{ kind: 'and'|'or', nodes }`. Operadores:
+  `eq/ne/gt/gte/lt/lte/in/nin/isNull/isNotNull`. Builders: `eq`, `where`, `and`, `or`,
+  `scopeAll`, `scopeNone`. Escolhido por ser **serializável, seguro e portável** — cada
+  adapter percorre a árvore e emite `WHERE` parametrizado. Espelha o Query Plan do Cerbos
+  (`ALWAYS_ALLOWED`/`ALWAYS_DENIED`/AST), diferente do `where`-object acoplado a ORM do
+  CASL. (Comparados: CASL `accessibleBy`, Pundit `policy_scope`, Cerbos `PlanResources`.)
+- **API core.** `@Policy(Entity)` define um método `scope(user)` (ou fallback estilo
+  `viewAny`) retornando `ScopeConstraint | boolean | null`. `gate.scope(Entity, ability?)`
+  / `boundGate.scope(...)` resolvem a constraint seguindo a MESMA ordem de grant do
+  single-resource: super-admin / `before` / permission-provider grant → **allow-all**;
+  anônimo, sem policy, ou sem método de scope → **deny-all** (deny-by-default consistente).
+  Tenant do nestjs-context flui pelo permission-provider (mesmo seam do RBAC tenant-aware).
+- **Aplicação TypeORM (caminho primário, manual).**
+  `applyScope(qb, gate, Entity)` (resolve + aplica) ou
+  `applyScopeConstraint(qb, await gate.scope(Entity))` (split). Usa placeholders nomeados
+  do TypeORM (`:p`, `:...p` para `IN`) — valores SEMPRE bound, nunca interpolados;
+  identificadores (coluna/alias) validados por `assertSafeIdentifier` (mesmo allowlist do
+  store). `allow-all` não adiciona `WHERE`; `deny-all` adiciona `1 = 0`. `compileScope` é
+  o compilador puro (testável sem DB).
+- **Adapters seguintes (deferidos).** A AST e o adapter TypeORM estão prontos;
+  mikro-orm / prisma reusam a MESMA `ScopeConstraint` do core (só falta o walker
+  específico) — follow-up.
+
+## 8.b Matriz de testes multi-dialeto (TypeORM)
+
+O store/scope-compiler do TypeORM emite SQL dialeto-sensível (placeholders `$n` vs `?`,
+`ON CONFLICT` vs `INSERT IGNORE`, quoting de identificadores). Testar só em sqlite
+escondeu bugs que **só** Postgres/MySQL reais pegam (vide REVIEW.md — bug do placeholder
+`?` no pg). Para travar isso:
+
+- **Specs comportamentais parametrizadas por dialeto.** Os fixtures compartilhados em
+  `test/support/datasource.ts` (`freshAuthzDataSource`, `freshSyncDataSource`) constroem o
+  `DataSource` do dialeto-alvo lido de `AUTHZ_TEST_DIALECT` (default `sqlite`). As MESMAS
+  specs de `*.integration.spec.ts` rodam em sqlite (no `pnpm test` default) e em
+  Postgres + MySQL reais (`pnpm test:db`). Isolamento sem churn de banco: cada fixture
+  recebe um **prefixo de tabela único** (o container é compartilhado entre os testes), e o
+  scope spec gera uma entidade `Post` com nome de tabela único por teste. As specs
+  asseguram a superfície completa: CRUD de roles/permissions, role↔perm, user↔role
+  (com tenant), permissões diretas (give/revoke), união de `getPermissionsForUser`,
+  wildcard end-to-end via Gate, `ensureAuthzSchema`/`createAuthzTables` não-destrutivos e
+  idempotentes, e os resultados de `applyScope`.
+- **`pnpm test:db` (matriz real, separada do default).** `vitest.db.config.ts` roda só os
+  `*.integration.spec.ts` num único fork sequencial; o global-setup
+  `test/support/testcontainers-setup.ts` sobe Postgres (`@testcontainers/postgresql`) e
+  MySQL (`@testcontainers/mysql`) e injeta a config de conexão via env. Sem Docker, o
+  setup captura o erro de start, seta `AUTHZ_TEST_SKIP=1` e o `describeIntegration` vira
+  `describe.skip` — o run sai verde em vez de vermelho. DevDeps adicionadas:
+  `@testcontainers/postgresql`, `@testcontainers/mysql`, `pg`, `mysql2`.
+
+**Dois bugs de dialeto encontrados e corrigidos (só pegos pelos engines reais):**
+
+1. **Nomes de constraint colidindo no Postgres (`schema.ts`).** Ao renomear a tabela
+   (BYO names / prefixo único), `Table.create` mantinha os nomes de índice/unique gerados
+   pelo nome DEFAULT da entidade — então duas tabelas da MESMA entidade sob nomes
+   diferentes emitiam o MESMO `IDX_…`. sqlite tolera (índice é por-tabela); Postgres
+   trata nome de índice como global e rejeita o 2º `CREATE TABLE`
+   (`relation "IDX_…" already exists`). Fix: após renomear, regerar os nomes de
+   índice/unique/check a partir do nome NOVO via `connection.namingStrategy`.
+2. **Quoting de identificador no MySQL (`scope.ts`).** `compileScope` fixava aspas duplas
+   (`"alias"."field"`) — válido em Postgres/sqlite, mas MySQL/MariaDB usam crase e
+   REJEITAM `"…"` como identificador. Fix: `compileScope` aceita um `escapeId` injetável
+   (default = aspas duplas, mantendo os unit tests puros) e `applyScopeConstraint` passa o
+   `driver.escape` do `DataSource`, tornando o predicado portável.
+
 ## 9. Não-objetivos
 - Não autentica (não cria/loga/guarda user; só referencia por id).
 - Não reimplementa CASL/Casbin (condição-como-dado / policy externa estão fora do escopo).

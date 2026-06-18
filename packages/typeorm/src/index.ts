@@ -1,9 +1,11 @@
 export {
   AUTHZ_ENTITIES,
   DEFAULT_TABLE_NAMES,
+  GLOBAL_TENANT,
   PermissionEntity,
   RoleEntity,
   RolePermissionEntity,
+  UserPermissionEntity,
   UserRoleEntity,
 } from './entities.js';
 export { createAuthzTables, ensureAuthzSchema } from './schema.js';
@@ -20,4 +22,12 @@ export type {
   AuthzRbacModuleOptions,
   UserRefMapper,
 } from './authz-rbac.module.js';
-export type { AuthzStoreOptions, TableNames, UserRef, UserRefInput } from './types.js';
+export type {
+  AuthzStoreOptions,
+  TableNames,
+  TenantScope,
+  UserRef,
+  UserRefInput,
+} from './types.js';
+export { applyScope, applyScopeConstraint, compileScope } from './scope.js';
+export type { CompiledScope, ScopeResolver } from './scope.js';

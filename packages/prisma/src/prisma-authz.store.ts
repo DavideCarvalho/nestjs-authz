@@ -150,9 +150,53 @@ export class PrismaAuthzStore {
     return roles.map((r) => r.name as string);
   }
 
-  /** The flattened, distinct permission names a user has via their roles. */
+  /**
+   * The flattened, distinct permission names a user has via their roles.
+   *
+   * Contract: returns the FULL deduped set of granted permission NAMES — including
+   * wildcard grants such as `posts.*`. This is NOT an existence check; callers
+   * ({@link userHasPermission}, {@link getUserAuthz}) depend on the complete set.
+   *
+   * Fast path: when the injected client exposes `$queryRaw`, assemble the set in a
+   * SINGLE database round-trip via one JOIN (3 round-trips → 1). On ANY failure
+   * (missing `$queryRaw`, custom `@@map` table names, non-Postgres identifier
+   * quoting, etc.) it degrades to {@link getPermissionsViaDelegates}, so correctness
+   * is preserved everywhere and only the common (Postgres + documented schema) case
+   * gets the speedup.
+   */
   async getPermissionsForUser(user: UserRef): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
+
+    const queryRaw = this.client.$queryRaw;
+    if (typeof queryRaw === 'function') {
+      try {
+        // Single JOIN across the three documented `@@map` tables. Identifiers are
+        // literal + double-quoted (Postgres); the user `${type}`/`${id}` VALUES go
+        // through the tagged template as BOUND params — never string-concatenated.
+        const rows = await queryRaw<Array<{ name: string }>>`
+          SELECT DISTINCT p."name" AS name
+          FROM "authz_permissions" p
+          JOIN "authz_role_permission" rp ON rp."permissionId" = p."id"
+          JOIN "authz_user_role" ur ON ur."roleId" = rp."roleId"
+          WHERE ur."userType" = ${type} AND ur."userId" = ${id}
+        `;
+        return [...new Set(rows.map((r) => r.name))];
+      } catch {
+        // Raw path unsupported for this client/schema/dialect — fall back below.
+        return this.getPermissionsViaDelegates(type, id);
+      }
+    }
+
+    return this.getPermissionsViaDelegates(type, id);
+  }
+
+  /**
+   * The original three-query implementation (userRole → rolePermission → permission),
+   * returning the same deduped permission-name set as {@link getPermissionsForUser}.
+   * Used directly when `$queryRaw` is unavailable, and as the fallback when the raw
+   * fast path throws.
+   */
+  private async getPermissionsViaDelegates(type: string, id: string): Promise<string[]> {
     const assignments = await this.client.userRole.findMany({
       where: { userType: type, userId: id },
     });

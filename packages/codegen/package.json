@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-codegen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "nestjs-codegen extension for @dudousxd/nestjs-authz — discovers @Can abilities and emits a typed can() into your generated client.",
   "license": "MIT",
   "repository": {

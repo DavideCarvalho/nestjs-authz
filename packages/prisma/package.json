@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-prisma",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Prisma RBAC persistence for @dudousxd/nestjs-authz — roles, permissions, and a Gate seam (zero connection ownership, structural client).",
   "license": "MIT",
   "repository": {

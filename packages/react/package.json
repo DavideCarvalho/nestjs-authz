@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React provider, useCan hook, and <Can> component for @dudousxd/nestjs-authz — read hydrated abilities synchronously with no network request.",
   "license": "MIT",
   "repository": {

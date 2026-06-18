@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-client",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Framework-neutral, in-memory ability store + can() resolver for @dudousxd/nestjs-authz — hydrate decisions once and answer client checks with no network request.",
   "license": "MIT",
   "repository": {

@@ -1,5 +1,12 @@
 # @dudousxd/nestjs-authz-react
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [[`07d01de`](https://github.com/DavideCarvalho/nestjs-authz/commit/07d01de286e7dfcae5fbeb10b7e8d48533214087)]:
+  - @dudousxd/nestjs-authz-client@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

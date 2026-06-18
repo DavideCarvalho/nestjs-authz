@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AbilityStore, createCan, hydrateFromInertiaProps, hydrateResource } from '../src/index.js';
+import {
+  AbilityStore,
+  createCan,
+  createCanBatch,
+  hydrateFromInertiaProps,
+  hydrateResource,
+} from '../src/index.js';
 
 describe('client AbilityStore + can() — hydrated reads, no request', () => {
   it('hydrates class abilities from props.auth.can and reads synchronously', () => {
@@ -121,5 +127,130 @@ describe('client AbilityStore + can() — hydrated reads, no request', () => {
     expect(store.peek('post.delete')).toBeUndefined();
     store.clear();
     expect(store.has('post.create')).toBe(false);
+  });
+});
+
+describe('createCanBatch — one round-trip for many checks', () => {
+  it('answers cache hits synchronously and never fetches when all are hydrated', async () => {
+    const store = new AbilityStore();
+    hydrateFromInertiaProps(store, { auth: { can: { a: true, b: false } } });
+    const fetchImpl = vi.fn();
+    const canBatch = createCanBatch(store, {
+      fallback: 'fetch',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const results = await canBatch([{ ability: 'a' }, { ability: 'b' }]);
+    expect(results).toEqual([
+      { ability: 'a', allowed: true },
+      { ability: 'b', allowed: false },
+    ]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('POSTs ONLY the cache-misses, in a single array request, and merges in order', async () => {
+    const store = new AbilityStore();
+    hydrateFromInertiaProps(store, { auth: { can: { known: true } } });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      // server echoes ability + verdict per item
+      json: async () => [
+        { ability: 'miss1', allowed: true },
+        { ability: 'miss2', allowed: false },
+      ],
+    });
+    const canBatch = createCanBatch(store, {
+      fallback: 'fetch',
+      endpoint: '/authz/can',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const results = await canBatch([
+      { ability: 'known' },
+      { ability: 'miss1' },
+      { ability: 'miss2' },
+    ]);
+
+    expect(results).toEqual([
+      { ability: 'known', allowed: true },
+      { ability: 'miss1', allowed: true },
+      { ability: 'miss2', allowed: false },
+    ]);
+
+    // ONE request for the two misses (not two).
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/authz/can');
+    expect(JSON.parse(init.body as string)).toEqual([
+      { ability: 'miss1', resource: null },
+      { ability: 'miss2', resource: null },
+    ]);
+  });
+
+  it("denies misses synchronously under fallback 'deny' (default), no fetch", async () => {
+    const store = new AbilityStore();
+    hydrateFromInertiaProps(store, { auth: { can: { yes: true } } });
+    const fetchImpl = vi.fn();
+    const canBatch = createCanBatch(store, { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const results = await canBatch([{ ability: 'yes' }, { ability: 'no' }]);
+    expect(results).toEqual([
+      { ability: 'yes', allowed: true },
+      { ability: 'no', allowed: false },
+    ]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('carries resource shims through the batch request and matches per-instance hits', async () => {
+    const store = new AbilityStore();
+    hydrateResource(store, { type: 'Post', id: 1 }, { update: true });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ ability: 'update', resource: { type: 'Post', id: 2 }, allowed: false }],
+    });
+    const canBatch = createCanBatch(store, {
+      fallback: 'fetch',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const results = await canBatch([
+      { ability: 'update', resource: { type: 'Post', id: 1 } }, // cache hit
+      { ability: 'update', resource: { type: 'Post', id: 2 } }, // miss → fetched
+    ]);
+
+    expect(results).toEqual([
+      { ability: 'update', resource: { type: 'Post', id: 1 }, allowed: true },
+      { ability: 'update', resource: { type: 'Post', id: 2 }, allowed: false },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual([
+      { ability: 'update', resource: { type: 'Post', id: 2 } },
+    ]);
+  });
+
+  it('denies all misses on a non-ok response', async () => {
+    const store = new AbilityStore();
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, json: async () => [] });
+    const canBatch = createCanBatch(store, {
+      fallback: 'fetch',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const results = await canBatch([{ ability: 'a' }, { ability: 'b' }]);
+    expect(results).toEqual([
+      { ability: 'a', allowed: false },
+      { ability: 'b', allowed: false },
+    ]);
+  });
+
+  it('an empty batch returns an empty array without fetching', async () => {
+    const store = new AbilityStore();
+    const fetchImpl = vi.fn();
+    const canBatch = createCanBatch(store, {
+      fallback: 'fetch',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(await canBatch([])).toEqual([]);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -177,3 +177,57 @@ describe('POST /authz/can resource rehydration (resourceLoaders)', () => {
       .expect(201, { allowed: true });
   });
 });
+
+describe('POST /authz/can — batch (array body)', () => {
+  let app: INestApplication | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  it('returns one verdict per item, in order, for an array body', async () => {
+    app = await bootstrap(true);
+    const res = await request(app.getHttpServer())
+      .post('/authz/can')
+      .send([{ ability: 'create' }, { ability: 'publish' }])
+      .expect(201);
+    expect(res.body).toEqual([
+      { ability: 'create', allowed: true },
+      { ability: 'publish', allowed: false },
+    ]);
+  });
+
+  it('echoes the resource shim and rehydrates per-item via resourceLoaders', async () => {
+    const mod = await Test.createTestingModule({
+      imports: [
+        AuthzModule.forRoot({
+          policies: [PostPolicy],
+          canEndpoint: true,
+          resourceLoaders: { Post: (id) => new Post(Number(id), Number(id) === 1 ? 1 : 2) },
+        }),
+      ],
+      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+    }).compile();
+    app = mod.createNestApplication();
+    await app.init();
+
+    const res = await request(app.getHttpServer())
+      .post('/authz/can')
+      .send([
+        { ability: 'update', resource: { type: 'Post', id: 1 } }, // owner #1 → allow
+        { ability: 'update', resource: { type: 'Post', id: 2 } }, // owner #2 → deny
+      ])
+      .expect(201);
+    expect(res.body).toEqual([
+      { ability: 'update', resource: { type: 'Post', id: 1 }, allowed: true },
+      { ability: 'update', resource: { type: 'Post', id: 2 }, allowed: false },
+    ]);
+  });
+
+  it('an empty array returns an empty array', async () => {
+    app = await bootstrap(true);
+    const res = await request(app.getHttpServer()).post('/authz/can').send([]).expect(201);
+    expect(res.body).toEqual([]);
+  });
+});

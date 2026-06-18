@@ -1,4 +1,5 @@
 import {
+  CONTEXT_ACCESSOR,
   PERMISSION_PROVIDER,
   type PermissionProvider,
   ROLE_PROVIDER,
@@ -14,6 +15,7 @@ import {
   type Provider,
   type Type,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import type { TypeOrmAuthzStore } from './typeorm-authz.store.js';
 import type { UserRef } from './types.js';
 
@@ -49,6 +51,52 @@ export interface AuthzRbacModuleAsyncOptions {
   useFactory: (...args: unknown[]) => Promise<AuthzRbacModuleOptions> | AuthzRbacModuleOptions;
 }
 
+/**
+ * Minimal structural mirror of nestjs-context's accessor — just the `tenantId()`
+ * we read. Injected via the shared {@link CONTEXT_ACCESSOR} token with `@Optional()`,
+ * so RBAC stays decoupled from nestjs-context (works with or without it).
+ */
+interface TenantContextAccessor {
+  tenantId?: () => string | undefined;
+}
+
+/** Read the current tenant from the (optional) context accessor, defensively. */
+function tenantScopeFrom(context: TenantContextAccessor | undefined): { tenantId?: string } {
+  if (!context || typeof context.tenantId !== 'function') return {};
+  let tenantId: string | undefined;
+  try {
+    tenantId = context.tenantId();
+  } catch {
+    tenantId = undefined;
+  }
+  return tenantId == null ? {} : { tenantId };
+}
+
+/**
+ * Locate the context accessor for tenant scoping. Prefers a value injected into
+ * this module; falls back to a non-strict {@link ModuleRef} lookup so an accessor
+ * provided by ANY module (the app root, a global ContextModule) is still found —
+ * the RBAC module is global and its providers don't import the app's modules, so a
+ * plain `@Inject` would miss a root-provided accessor. Mirrors the Gate's seam.
+ */
+function resolveTenantContext(
+  injected: TenantContextAccessor | undefined,
+  moduleRef: ModuleRef | undefined,
+  cache: { resolved: boolean; value: TenantContextAccessor | undefined },
+): TenantContextAccessor | undefined {
+  if (injected) return injected;
+  if (cache.resolved) return cache.value;
+  cache.resolved = true;
+  if (moduleRef) {
+    try {
+      cache.value = moduleRef.get<TenantContextAccessor>(CONTEXT_ACCESSOR, { strict: false });
+    } catch {
+      cache.value = undefined;
+    }
+  }
+  return cache.value;
+}
+
 /** Default mapping: accept a `{ type, id }` ref, a `{ id }` object, or a bare id. */
 export function defaultUserRefMapper(user: unknown): UserRef | undefined {
   if (user == null) return undefined;
@@ -66,17 +114,43 @@ export function defaultUserRefMapper(user: unknown): UserRef | undefined {
  */
 @Injectable()
 class RbacPermissionProvider implements PermissionProvider {
-  constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
+  private readonly contextCache = {
+    resolved: false,
+    value: undefined as TenantContextAccessor | undefined,
+  };
+
+  constructor(
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
+    @Optional() private readonly moduleRef?: ModuleRef,
+  ) {}
+
+  private scope(): { tenantId?: string } {
+    return tenantScopeFrom(resolveTenantContext(this.context, this.moduleRef, this.contextCache));
+  }
 
   // The core `PermissionProvider` interface passes an optional `resource` (3rd
   // arg); it is intentionally ignored here. RBAC grants are model-less,
   // named-ability grants (the Laravel/spatie `Gate::before` grant), so the
-  // verdict never depends on a specific resource instance.
+  // verdict never depends on a specific resource instance. Permissions are scoped
+  // by the current tenant (from nestjs-context, when present) — a tenant-scoped
+  // role only grants within its tenant; direct user grants always apply.
   async hasPermission(user: unknown, permission: string): Promise<boolean | undefined> {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.userHasPermission(ref, permission);
+    return this.options.store.userHasPermission(ref, permission, this.scope());
+  }
+
+  // Expose the user's full granted permission set so the core can apply
+  // Laravel/spatie-style wildcard matching (a granted `posts.*` satisfies a check
+  // for `posts.update`, `*` satisfies anything). The matching itself lives in core,
+  // so every adapter that lists grants gets wildcard semantics for free.
+  async getPermissions(user: unknown): Promise<string[] | undefined> {
+    const map = this.options.userRefFrom ?? defaultUserRefMapper;
+    const ref = map(user);
+    if (ref === undefined) return undefined;
+    return this.options.store.getPermissionsForUser(ref, this.scope());
   }
 }
 
@@ -88,13 +162,27 @@ class RbacPermissionProvider implements PermissionProvider {
  */
 @Injectable()
 class RbacRoleProvider implements RoleProvider {
-  constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
+  private readonly contextCache = {
+    resolved: false,
+    value: undefined as TenantContextAccessor | undefined,
+  };
+
+  constructor(
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
+    @Optional() private readonly moduleRef?: ModuleRef,
+  ) {}
 
   async getRoles(user: unknown): Promise<string[] | undefined> {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.getRolesForUser(ref);
+    // Scope roles by the current tenant (when nestjs-context is present): a
+    // tenant-scoped role only counts within its tenant; global roles always count.
+    const scope = tenantScopeFrom(
+      resolveTenantContext(this.context, this.moduleRef, this.contextCache),
+    );
+    return this.options.store.getRolesForUser(ref, scope);
   }
 }
 

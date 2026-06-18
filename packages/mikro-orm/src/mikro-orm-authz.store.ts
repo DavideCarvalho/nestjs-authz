@@ -155,18 +155,54 @@ export class MikroOrmAuthzStore {
     return roles.map((r) => r.name);
   }
 
-  /** The flattened, distinct permission names a user has via their roles. */
+  /**
+   * The flattened, distinct permission names a user has via their roles.
+   *
+   * Resolved in a SINGLE database round-trip via a `permission ← rolePermission ← userRole`
+   * join (previously three sequential `find` calls). Table/column names are read from the
+   * live entity metadata (not hard-coded) so re-decorated table names keep working. The
+   * returned set is the FULL granted permission name set, deduped — callers (incl. the
+   * wildcard matcher) rely on getting every granted name (e.g. a granted `posts.*`).
+   */
   async getPermissionsForUser(user: UserRef): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
     const em = this.em.fork();
-    const assignments = await em.find(UserRoleEntity, { userType: type, userId: id });
-    if (assignments.length === 0) return [];
-    const roleIds = assignments.map((a) => a.roleId);
-    const links = await em.find(RolePermissionEntity, { roleId: { $in: roleIds } });
-    if (links.length === 0) return [];
-    const permissionIds = [...new Set(links.map((l) => l.permissionId))];
-    const permissions = await em.find(PermissionEntity, { id: { $in: permissionIds } });
-    return [...new Set(permissions.map((p) => p.name))];
+
+    // Derive physical table + column names from metadata so we honor re-decorated entities.
+    const meta = em.getMetadata();
+    const perm = meta.get(PermissionEntity.name);
+    const rolePerm = meta.get(RolePermissionEntity.name);
+    const userRole = meta.get(UserRoleEntity.name);
+
+    /** First physical column name for an entity property, from live metadata. */
+    const col = (m: typeof perm, prop: string): string => {
+      const field = m.properties[prop]?.fieldNames?.[0];
+      if (!field) throw new Error(`Missing column metadata for ${m.className}.${prop}`);
+      return field;
+    };
+
+    const permTable = perm.tableName;
+    const permId = col(perm, 'id');
+    const permName = col(perm, 'name');
+    const rpTable = rolePerm.tableName;
+    const rpRoleId = col(rolePerm, 'roleId');
+    const rpPermId = col(rolePerm, 'permissionId');
+    const urTable = userRole.tableName;
+    const urRoleId = col(userRole, 'roleId');
+    const urUserType = col(userRole, 'userType');
+    const urUserId = col(userRole, 'userId');
+
+    // Single round-trip: permission ← rolePermission ← userRole. Identifiers come from
+    // entity metadata (trusted), values are bound as parameters (no SQL injection surface).
+    const sql =
+      `select distinct p.${permName} as name ` +
+      `from ${permTable} p ` +
+      `inner join ${rpTable} rp on rp.${rpPermId} = p.${permId} ` +
+      `inner join ${urTable} ur on ur.${urRoleId} = rp.${rpRoleId} ` +
+      `where ur.${urUserType} = ? and ur.${urUserId} = ?`;
+
+    const rows = (await em.getConnection().execute(sql, [type, id])) as Array<{ name: string }>;
+    return [...new Set(rows.map((r) => r.name))];
   }
 
   /** A user's roles + effective permissions in one shot. */

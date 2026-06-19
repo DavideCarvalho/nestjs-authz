@@ -1,6 +1,29 @@
 import type { Resource, User } from './types.js';
 
 /**
+ * Conservative identifier allowlist for any name interpolated into a query by an adapter —
+ * table/schema names and policy-supplied scope `field`s. BYO/policy-supplied names are validated
+ * against this before interpolation; values are always bound, never concatenated.
+ */
+export const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Validate an identifier (table/schema/column name) against {@link SAFE_IDENTIFIER}, throwing on
+ * anything containing quotes, dots, whitespace, or other unsafe characters. Single source of the
+ * injection guard for every adapter.
+ *
+ * @param value the identifier to check
+ * @param what  a label for the error message (e.g. `table name "roles"`)
+ */
+export function assertSafeIdentifier(value: string, what: string): void {
+  if (!SAFE_IDENTIFIER.test(value)) {
+    throw new Error(
+      `Unsafe ${what}: ${JSON.stringify(value)}. Identifiers must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscore; not starting with a digit). This blocks injection via configured names.`,
+    );
+  }
+}
+
+/**
  * ORM-neutral query-scope constraint (the `accessibleBy` / Pundit `policy_scope` /
  * Cerbos `PlanResources` concept). Where a policy METHOD decides yes/no for a SINGLE
  * resource, a policy SCOPE produces a constraint that filters a COLLECTION to the rows

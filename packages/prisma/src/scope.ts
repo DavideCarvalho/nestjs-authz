@@ -1,3 +1,4 @@
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import type {
   ScopeCondition,
   ScopeConstraint,
@@ -18,23 +19,6 @@ export interface ScopeResolver {
 
 /** A Prisma `where` object (structurally typed; the consumer's generated input is narrower). */
 export type PrismaWhere = Record<string, unknown>;
-
-/**
- * SQL identifiers (column names) become object KEYS in the emitted `where`. Prisma binds
- * VALUES as parameters, but a field name is interpreted as a column/relation path on the
- * model, so a hostile name must never reach the query engine. We restrict field names to
- * the same conservative allowlist the TypeORM adapter uses (letters/digits/underscore,
- * not leading-digit) and reject anything else loudly.
- */
-const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function assertSafeIdentifier(value: string, what: string): void {
-  if (!SAFE_IDENTIFIER.test(value)) {
-    throw new Error(
-      `Unsafe ${what}: ${JSON.stringify(value)}. Identifiers must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscore; not starting with a digit). This blocks injection via configured names.`,
-    );
-  }
-}
 
 /**
  * An always-false predicate as a Prisma `where`. Prisma treats an EMPTY `OR` array as

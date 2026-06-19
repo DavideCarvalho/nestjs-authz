@@ -1,3 +1,4 @@
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import type {
   ScopeCondition,
   ScopeConstraint,
@@ -15,23 +16,6 @@ import type { Type } from '@nestjs/common';
  */
 export interface ScopeResolver {
   scope(entity: Type<unknown>, ability?: string): Promise<ScopeConstraint>;
-}
-
-/**
- * SQL identifiers (column names) become object KEYS in the emitted `FilterQuery`.
- * MikroORM binds VALUES as parameters, but a field name is interpreted as a property /
- * column path, so a hostile name must never reach the driver. We restrict field names
- * to the same conservative allowlist the TypeORM adapter uses (letters/digits/underscore,
- * not leading-digit) and reject anything else loudly.
- */
-const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function assertSafeIdentifier(value: string, what: string): void {
-  if (!SAFE_IDENTIFIER.test(value)) {
-    throw new Error(
-      `Unsafe ${what}: ${JSON.stringify(value)}. Identifiers must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscore; not starting with a digit). This blocks injection via configured names.`,
-    );
-  }
 }
 
 /**

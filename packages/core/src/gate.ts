@@ -448,21 +448,11 @@ export class Gate {
     if (sa.allowed === true) return scopeAll;
 
     // 2. Permission-provider grant for the scope ability → allow-all.
-    if (maybeUser !== NO_USER) {
-      const provider = this.resolvePermissionProvider();
-      if (provider) {
-        if (typeof provider.getPermissions === 'function') {
-          const cache = this.resolveRequestCache();
-          const satisfied = cache
-            ? await cache.satisfies(provider, user, ability)
-            : await (async () => {
-                const granted = await provider.getPermissions?.(user);
-                return granted == null ? undefined : permissionSatisfied(granted, ability);
-              })();
-          if (satisfied === true) return scopeAll;
-        }
-        if ((await provider.hasPermission(user, ability)) === true) return scopeAll;
-      }
+    if (
+      maybeUser !== NO_USER &&
+      (await this.permissionProviderGrants(user, ability, undefined, this.resolveRequestCache()))
+    ) {
+      return scopeAll;
     }
 
     // 3. Policy scope (or viewAny-style fallback) method.
@@ -497,6 +487,37 @@ export class Gate {
     const fallback = (policy as Record<string, unknown>)[ability];
     if (typeof fallback === 'function') return fallback as ScopeMethod;
     return undefined;
+  }
+
+  /**
+   * Whether the registered {@link PermissionProvider} grants `ability` for an authenticated `user` —
+   * the RBAC "before" grant shared by the single-resource ({@link resolveBase}) and scope
+   * ({@link resolveScope}) paths, single-sourced here so the grant order can't drift between them.
+   *
+   * Grant-only: a `false`/nullish result is "no grant", never a deny. When the provider lists the
+   * user's granted permissions, segment-based wildcard matching runs in the core (a granted
+   * `posts.*` satisfies `posts.update`, `*` satisfies anything) regardless of adapter; a nullish
+   * list defers to the exact-match `hasPermission`. The granted set is fetched through `cache` when
+   * one is supplied, else via a direct fetch.
+   */
+  private async permissionProviderGrants(
+    user: User,
+    ability: string,
+    resource: Resource | undefined,
+    cache: PermissionCache | undefined,
+  ): Promise<boolean> {
+    const provider = this.resolvePermissionProvider();
+    if (!provider) return false;
+    if (typeof provider.getPermissions === 'function') {
+      const satisfied = cache
+        ? await cache.satisfies(provider, user, ability)
+        : await (async () => {
+            const granted = await provider.getPermissions?.(user);
+            return granted == null ? undefined : permissionSatisfied(granted, ability);
+          })();
+      if (satisfied === true) return true;
+    }
+    return (await provider.hasPermission(user, ability, resource)) === true;
   }
 
   /**
@@ -621,30 +642,11 @@ export class Gate {
     // registered and the (authenticated) user holds the named permission, grant it.
     // Grant-only — a `false`/`undefined` result falls through to normal resolution,
     // so this never *denies* an ability a policy/gate would otherwise allow.
-    if (maybeUser !== NO_USER) {
-      const provider = this.resolvePermissionProvider();
-      if (provider) {
-        // Wildcard/hierarchical grants: when the provider lists the user's granted
-        // permissions, apply segment-based wildcard matching in the core so a granted
-        // `posts.*` satisfies `posts.update` (and `*` satisfies anything) regardless
-        // of adapter. A nullish list defers to the exact-match `hasPermission` path.
-        if (typeof provider.getPermissions === 'function') {
-          // Route through the (request- or batch-scoped) PermissionCache when one is
-          // supplied so the user's granted set is fetched at most once; without a
-          // cache, fall back to a direct fetch (behavior unchanged).
-          const satisfied = cache
-            ? await cache.satisfies(provider, user, ability)
-            : await (async () => {
-                const granted = await provider.getPermissions?.(user);
-                return granted == null ? undefined : permissionSatisfied(granted, ability);
-              })();
-          if (satisfied === true) {
-            return { allowed: true, reason: 'permission-provider' };
-          }
-        }
-        const granted = await provider.hasPermission(user, ability, resource);
-        if (granted === true) return { allowed: true, reason: 'permission-provider' };
-      }
+    if (
+      maybeUser !== NO_USER &&
+      (await this.permissionProviderGrants(user, ability, resource, cache))
+    ) {
+      return { allowed: true, reason: 'permission-provider' };
     }
 
     const policy = this.resolvePolicy(ability, resource);

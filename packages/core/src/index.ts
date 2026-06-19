@@ -33,6 +33,8 @@ export { permissionMatches, permissionSatisfied } from './permission-matcher.js'
 export {
   and,
   eq,
+  SAFE_IDENTIFIER,
+  assertSafeIdentifier,
   normalizeScope,
   or,
   scopeAll,

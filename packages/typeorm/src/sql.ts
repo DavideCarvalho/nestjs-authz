@@ -1,5 +1,9 @@
 import type { DataSource } from 'typeorm';
 
+// Re-exported so the package's existing `./sql.js` import sites (and tests) keep working while the
+// guard itself is single-sourced in core.
+export { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
+
 /**
  * Database types whose driver binds parameters with positional `$1, $2, …`
  * placeholders instead of `?`. Postgres (and its aurora/cockroach kin) reject the
@@ -38,28 +42,5 @@ export class Placeholders {
     const token = this.postgres ? `$${this.index + 1}` : '?';
     this.index += 1;
     return token;
-  }
-}
-
-/**
- * SQL identifiers (table / schema names) are interpolated into query text, NOT
- * passed as bound parameters — `driver.escape()` only wraps them in quotes, it does
- * NOT neutralize an embedded quote. To keep BYO `tableNames`/`schema` safe, restrict
- * them to a conservative allowlist and reject anything else loudly.
- */
-const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/**
- * Validate an identifier (table/schema name) against {@link SAFE_IDENTIFIER}.
- * Throws on anything containing quotes, dots, whitespace, or other unsafe chars.
- *
- * @param value the identifier to check
- * @param what  a label for the error message (e.g. `table name "roles"`)
- */
-export function assertSafeIdentifier(value: string, what: string): void {
-  if (!SAFE_IDENTIFIER.test(value)) {
-    throw new Error(
-      `Unsafe ${what}: ${JSON.stringify(value)}. Identifiers must match /^[A-Za-z_][A-Za-z0-9_]*$/ (letters, digits, underscore; not starting with a digit). This blocks SQL injection via configured names.`,
-    );
   }
 }

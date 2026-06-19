@@ -104,6 +104,58 @@ describe('PrismaAuthzStore (structural fake client)', () => {
     await moduleRef.close();
   });
 
+  it('raw fast path: $queryRaw client returns full deduped set (wildcard + 2 roles)', async () => {
+    // editor grants a concrete + a WILDCARD permission; admin re-grants posts.* (dedupe).
+    await store.givePermissionToRole('editor', 'posts.edit');
+    await store.givePermissionToRole('editor', 'posts.*');
+    await store.givePermissionToRole('admin', 'posts.*');
+    await store.givePermissionToRole('admin', 'users.ban');
+    await store.assignRole({ type: 'user', id: 7 }, 'editor');
+    await store.assignRole({ type: 'user', id: 7 }, 'admin');
+
+    // The default fake exposes $queryRaw, so the store takes the raw branch.
+    expect(typeof client.$queryRaw).toBe('function');
+    expect((await store.getPermissionsForUser({ type: 'user', id: 7 })).sort()).toEqual([
+      'posts.*',
+      'posts.edit',
+      'users.ban',
+    ]);
+    // Wildcard grant is returned as a NAME (not expanded / existence-checked).
+    expect(await store.userHasPermission({ type: 'user', id: 7 }, 'posts.*')).toBe(true);
+  });
+
+  it('fallback path: client WITHOUT $queryRaw returns the same set via 3 queries', async () => {
+    const noRaw = makeFakeClient({ rawQuery: false });
+    const s = new PrismaAuthzStore(noRaw);
+    await s.givePermissionToRole('editor', 'posts.edit');
+    await s.givePermissionToRole('editor', 'posts.*');
+    await s.givePermissionToRole('admin', 'posts.*');
+    await s.givePermissionToRole('admin', 'users.ban');
+    await s.assignRole({ type: 'user', id: 7 }, 'editor');
+    await s.assignRole({ type: 'user', id: 7 }, 'admin');
+
+    expect(noRaw.$queryRaw).toBeUndefined();
+    expect((await s.getPermissionsForUser({ type: 'user', id: 7 })).sort()).toEqual([
+      'posts.*',
+      'posts.edit',
+      'users.ban',
+    ]);
+  });
+
+  it('fallback path: $queryRaw that throws degrades to the 3-query path', async () => {
+    const throwing = makeFakeClient({ rawQuery: 'throw' });
+    const s = new PrismaAuthzStore(throwing);
+    await s.givePermissionToRole('editor', 'posts.edit');
+    await s.givePermissionToRole('admin', 'users.ban');
+    await s.assignRole({ type: 'user', id: 7 }, 'editor');
+    await s.assignRole({ type: 'user', id: 7 }, 'admin');
+
+    expect((await s.getPermissionsForUser({ type: 'user', id: 7 })).sort()).toEqual([
+      'posts.edit',
+      'users.ban',
+    ]);
+  });
+
   it('module accepts a raw `client` (builds the store internally)', async () => {
     const c = makeFakeClient();
     const s = new PrismaAuthzStore(c);

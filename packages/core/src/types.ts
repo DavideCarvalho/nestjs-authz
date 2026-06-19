@@ -15,10 +15,34 @@ export type Resource = object;
 export type User = unknown;
 
 /**
- * A policy method: decides a single ability for a `(user, resource?)` pair.
- * Class-level abilities (e.g. `create`) omit the resource. May be async.
+ * The richer result a policy method / ad-hoc gate may return instead of a bare
+ * boolean: a verdict plus an optional human-readable `message` explaining a denial.
+ * The message is surfaced on the thrown `ForbiddenException` (so a 403 is debuggable)
+ * and published on the diagnostics decision. Returning a bare boolean is unchanged.
+ *
+ * Mirrors Laravel's `Response::allow()/deny('message')`.
  */
-export type PolicyMethod = (user: User, resource?: Resource) => boolean | Promise<boolean>;
+export interface PolicyResponse {
+  allowed: boolean;
+  message?: string;
+}
+
+/**
+ * What a policy method / gate / hook may return: a bare boolean (unchanged) or the
+ * richer {@link PolicyResponse}. Hooks additionally allow `void`/`undefined` to mean
+ * "no opinion — fall through".
+ */
+export type PolicyResult = boolean | PolicyResponse;
+
+/**
+ * A policy method: decides a single ability for a `(user, resource?)` pair.
+ * Class-level abilities (e.g. `create`) omit the resource. May be async. May return
+ * a bare boolean (unchanged) or a richer {@link PolicyResponse} with a deny message.
+ */
+export type PolicyMethod = (
+  user: User,
+  resource?: Resource,
+) => PolicyResult | Promise<PolicyResult>;
 
 /**
  * Optional per-policy `before` hook. Runs before the ability method.
@@ -29,7 +53,7 @@ export type PolicyMethod = (user: User, resource?: Resource) => boolean | Promis
 export type PolicyBeforeHook = (
   user: User,
   ability: string,
-) => boolean | undefined | Promise<boolean | undefined>;
+) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
 
 /** A policy instance is an arbitrary object whose methods are abilities. */
 export type PolicyInstance = Record<string, unknown> & {
@@ -38,8 +62,31 @@ export type PolicyInstance = Record<string, unknown> & {
 
 /**
  * An ad-hoc gate: a model-less ability resolved by name via `gate.define`.
+ * May return a bare boolean (unchanged) or a richer {@link PolicyResponse}.
  */
-export type GateFn = (user: User, resource?: Resource) => boolean | Promise<boolean>;
+export type GateFn = (user: User, resource?: Resource) => PolicyResult | Promise<PolicyResult>;
+
+/**
+ * Global `after` hook. Mirrors Laravel's `Gate::after()`: runs AFTER policy/gate
+ * resolution and may observe or override the decision.
+ *
+ * `result` is the verdict produced by the policy/gate (`true`/`false`), or
+ * `undefined` when the policy/gate returned a nullish value (it had "no opinion").
+ *
+ * Override semantics (Laravel-idiomatic): the hook's return value REPLACES the
+ * decision ONLY when the policy/gate produced no explicit verdict (`result` is
+ * `undefined`). When the policy/gate DID decide (returned a boolean), `after` is
+ * purely an observer and its return value is ignored — so it can never silently
+ * overturn an explicit allow/deny. Returning `void`/`undefined` always leaves the
+ * decision untouched. Like a policy, it may return a {@link PolicyResponse} to
+ * attach a deny message.
+ */
+export type AfterHook = (
+  user: User,
+  ability: string,
+  result: boolean | undefined,
+  resource?: Resource,
+) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
 
 /**
  * A resource loader: turns an `id` into the REAL entity instance for a resource
@@ -62,7 +109,7 @@ export type ResourceLoaderMap = Record<string, ResourceLoader>;
 export type SuperAdminHook = (
   user: User,
   ability: string,
-) => boolean | undefined | Promise<boolean | undefined>;
+) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
 
 export interface AuthzModuleOptions {
   /**
@@ -83,6 +130,18 @@ export interface AuthzModuleOptions {
    * explicit `gate.forUser(entity)` path you receive exactly what you passed.
    */
   superAdmin?: SuperAdminHook;
+  /**
+   * Global `after` hook (Laravel's `Gate::after()`). Runs AFTER policy/gate
+   * resolution and may observe or override the decision. It can only OVERRIDE the
+   * verdict when the policy/gate produced no explicit result (returned nullish);
+   * when the policy/gate decided explicitly, `after` is observe-only and its return
+   * value is ignored. Returning `void`/`undefined` always leaves the decision
+   * untouched. See {@link AfterHook}.
+   *
+   * Receives the same (possibly un-hydrated) `user` as {@link superAdmin} on the
+   * context path — apply {@link resolveUser} if you need the full entity.
+   */
+  after?: AfterHook;
   /**
    * Optional hook to hydrate the full user entity from the context's
    * {@link UserRef} (`{ type, id }`) before policies / `before` / `superAdmin`

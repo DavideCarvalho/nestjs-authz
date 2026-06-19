@@ -17,3 +17,5 @@ export type {
   UserRefMapper,
 } from './authz-rbac.module.js';
 export type { UserRef, UserRefInput } from './types.js';
+export { applyScope, compileScope } from './scope.js';
+export type { PrismaWhere, ScopeResolver } from './scope.js';

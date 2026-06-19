@@ -11,6 +11,7 @@ import {
   PermissionEntity,
   RoleEntity,
   RolePermissionEntity,
+  UserPermissionEntity,
   UserRoleEntity,
 } from './entities.js';
 import { assertSafeIdentifier } from './sql.js';
@@ -32,12 +33,14 @@ function resolveNames(tableNames: TableNames | undefined): {
   permissions: string;
   rolePermission: string;
   userRole: string;
+  userPermission: string;
 } {
   return {
     roles: tableNames?.roles ?? DEFAULT_TABLE_NAMES.roles,
     permissions: tableNames?.permissions ?? DEFAULT_TABLE_NAMES.permissions,
     rolePermission: tableNames?.rolePermission ?? DEFAULT_TABLE_NAMES.rolePermission,
     userRole: tableNames?.userRole ?? DEFAULT_TABLE_NAMES.userRole,
+    userPermission: tableNames?.userPermission ?? DEFAULT_TABLE_NAMES.userPermission,
   };
 }
 
@@ -55,6 +58,7 @@ function plans(opts: AuthzStoreOptions | undefined): TablePlan[] {
     { entity: PermissionEntity, name: tableName(names.permissions, schema) },
     { entity: RolePermissionEntity, name: tableName(names.rolePermission, schema) },
     { entity: UserRoleEntity, name: tableName(names.userRole, schema) },
+    { entity: UserPermissionEntity, name: tableName(names.userPermission, schema) },
   ];
 }
 
@@ -62,10 +66,37 @@ function plans(opts: AuthzStoreOptions | undefined): TablePlan[] {
  * Build a driver-portable {@link Table} from entity metadata, overriding the table name
  * so BYO names + an optional Postgres schema are honored (the metadata's own name is the
  * entity-decorator default).
+ *
+ * Constraint-name rewrite (Postgres-critical): TypeORM derives index / unique / primary-key
+ * names by hashing the table name + columns (see `DefaultNamingStrategy.indexName` et al.).
+ * `Table.create` computes those from the entity's DEFAULT name, so simply reassigning
+ * `table.name` leaves the constraints carrying the OLD name's hash. Two tables created from
+ * the SAME entity metadata under DIFFERENT runtime names (BYO table names, or a per-test
+ * unique prefix) then emit IDENTICAL constraint names. SQLite scopes index names per-table
+ * and tolerates this; Postgres treats index/constraint names as schema-global and rejects
+ * the second `CREATE TABLE` with `relation "IDX_..." already exists`. So after renaming we
+ * regenerate every constraint name from the NEW table name via the connection's naming
+ * strategy, keeping each created table's constraints globally unique.
  */
-function tableFromMetadata(metadata: EntityMetadata, driver: DataSource['driver'], name: string) {
+function tableFromMetadata(
+  connection: DataSource,
+  metadata: EntityMetadata,
+  driver: DataSource['driver'],
+  name: string,
+) {
   const table = Table.create(metadata, driver);
   table.name = name;
+
+  const naming = connection.namingStrategy;
+  for (const index of table.indices) {
+    index.name = naming.indexName(name, index.columnNames, index.where);
+  }
+  for (const unique of table.uniques) {
+    unique.name = naming.uniqueConstraintName(name, unique.columnNames);
+  }
+  for (const check of table.checks) {
+    if (check.expression) check.name = naming.checkConstraintName(name, check.expression);
+  }
   return table;
 }
 
@@ -90,7 +121,10 @@ export async function createAuthzTables(
   for (const plan of plans(opts)) {
     if (await queryRunner.hasTable(plan.name)) continue;
     const metadata = queryRunner.connection.getMetadata(plan.entity);
-    await queryRunner.createTable(tableFromMetadata(metadata, driver, plan.name), true);
+    await queryRunner.createTable(
+      tableFromMetadata(queryRunner.connection, metadata, driver, plan.name),
+      true,
+    );
   }
 }
 
@@ -138,7 +172,10 @@ export async function ensureAuthzSchema(
         await addMissingColumns(queryRunner, plan);
       } else {
         const metadata = queryRunner.connection.getMetadata(plan.entity);
-        await queryRunner.createTable(tableFromMetadata(metadata, driver, plan.name), true);
+        await queryRunner.createTable(
+          tableFromMetadata(queryRunner.connection, metadata, driver, plan.name),
+          true,
+        );
       }
     }
   } finally {

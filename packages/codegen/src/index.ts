@@ -147,8 +147,8 @@ function resourceAbilityMapLiteral(byResource: Map<string, Set<string>>): string
 /** The `import { ... } from '@dudousxd/nestjs-authz-client'` line the header contributes. */
 function canHelperImports(): string[] {
   return [
-    "import { AbilityStore, createCan } from '@dudousxd/nestjs-authz-client';",
-    "import type { ResourceRef } from '@dudousxd/nestjs-authz-client';",
+    "import { AbilityStore, createCan, createCanBatch } from '@dudousxd/nestjs-authz-client';",
+    "import type { ResourceRef, BatchAbilityResult } from '@dudousxd/nestjs-authz-client';",
   ];
 }
 
@@ -201,6 +201,29 @@ function canHelperStatements(union: string, mapLiteral: string, endpoint: string
     '  resource?: ResourceRef | null,',
     '): boolean | Promise<boolean> {',
     '  return authzCan(ability, resource ?? undefined);',
+    '}',
+    '',
+    '/**',
+    " * Batch resolver from '@dudousxd/nestjs-authz-client', bound to `authzStore`. For list",
+    ' * pages: answers hydrated items from the store and POSTs ALL cache-misses to',
+    ` * \`${endpoint}\` in ONE request (instead of one per item).`,
+    ' */',
+    'const authzCanBatch = createCanBatch(authzStore, {',
+    `  fallback: 'fetch',`,
+    `  endpoint: ${JSON.stringify(endpoint)},`,
+    '});',
+    '',
+    '/**',
+    ' * Authorize MANY abilities at once. Each item is typed against the discovered',
+    ' * abilities, so a wrong ability is a compile error. Hydrated decisions resolve with',
+    ` * no request; the remaining misses are fetched from \`${endpoint}\` in a single batch.`,
+    ' */',
+    'export function canBatch(',
+    '  items: ReadonlyArray<{ ability: AuthzAbility; resource?: ResourceRef | null }>,',
+    '): Promise<BatchAbilityResult[]> {',
+    '  return authzCanBatch(',
+    '    items.map((i) => (i.resource == null ? { ability: i.ability } : { ability: i.ability, resource: i.resource })),',
+    '  );',
     '}',
   ];
 }

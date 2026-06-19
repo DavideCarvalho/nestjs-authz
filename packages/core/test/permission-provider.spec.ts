@@ -53,3 +53,51 @@ describe('PermissionProvider seam (RBAC ↔ Gate)', () => {
     );
   });
 });
+
+describe('PermissionProvider wildcard / hierarchical grants (getPermissions seam)', () => {
+  // A provider that lists the user's granted permissions (each possibly a wildcard
+  // pattern). The core applies segment-based matching against this set.
+  const wildcardProvider: PermissionProvider = {
+    hasPermission: () => false, // exact path defers entirely to getPermissions here
+    getPermissions(user) {
+      return (user as { perms?: string[] }).perms ?? [];
+    },
+  };
+
+  it('exact match grant satisfies the check', async () => {
+    const gate = gateWithProvider(wildcardProvider);
+    expect(await gate.forUser({ perms: ['posts.update'] }).allows('posts.update')).toBe(true);
+  });
+
+  it('posts.* grant satisfies posts.update', async () => {
+    const gate = gateWithProvider(wildcardProvider);
+    expect(await gate.forUser({ perms: ['posts.*'] }).allows('posts.update')).toBe(true);
+  });
+
+  it('* grant satisfies anything', async () => {
+    const gate = gateWithProvider(wildcardProvider);
+    expect(await gate.forUser({ perms: ['*'] }).allows('comments.delete')).toBe(true);
+  });
+
+  it('posts.* grant does NOT satisfy comments.update (non-match → unresolved)', async () => {
+    const gate = gateWithProvider(wildcardProvider);
+    await expect(
+      gate.forUser({ perms: ['posts.*'] }).allows('comments.update'),
+    ).rejects.toBeInstanceOf(AbilityNotResolvedException);
+  });
+
+  it('falls back to hasPermission exact path when getPermissions yields no match', async () => {
+    // getPermissions returns a non-matching set; hasPermission grants the exact name.
+    const mixed: PermissionProvider = {
+      hasPermission: (_u, permission) => permission === 'posts.publish',
+      getPermissions: () => ['comments.*'],
+    };
+    const gate = gateWithProvider(mixed);
+    expect(await gate.forUser({}).allows('posts.publish')).toBe(true);
+  });
+
+  it('still skipped for an anonymous (NO_USER) caller', async () => {
+    const gate = gateWithProvider(wildcardProvider);
+    await expect(gate.allows('posts.update')).rejects.toBeInstanceOf(AbilityNotResolvedException);
+  });
+});

@@ -3,6 +3,7 @@ export const VERSION = '0.0.0';
 export {
   AbilityStore,
   createCan,
+  createCanBatch,
   hydrateFromInertiaProps,
   hydrateResource,
 } from './store.js';
@@ -13,4 +14,7 @@ export type {
   FallbackMode,
   AbilityStoreOptions,
   CanResolver,
+  BatchAbilityRequest,
+  BatchAbilityResult,
+  CanBatchResolver,
 } from './store.js';

@@ -11,7 +11,18 @@ export const DEFAULT_TABLE_NAMES = {
   permissions: 'authz_permissions',
   rolePermission: 'authz_role_permission',
   userRole: 'authz_user_role',
+  userPermission: 'authz_user_permission',
 } as const;
+
+/**
+ * The "no tenant" sentinel for the user-role pivot's `tenantId`. A GLOBAL (unscoped)
+ * assignment stores this empty string rather than `NULL` so the column stays part of
+ * the composite primary key with portable, dialect-correct uniqueness (SQL treats
+ * `NULL`s as distinct, which would break idempotency of a global grant and silently
+ * permit duplicates). The column is added post-v1 with a default of this value, so an
+ * older populated table self-heals via `ensureAuthzSchema` (`ADD COLUMN ... DEFAULT ''`).
+ */
+export const GLOBAL_TENANT = '';
 
 /**
  * A named role (e.g. `editor`). Permissions are attached via {@link RolePermissionEntity};
@@ -68,6 +79,13 @@ export class RolePermissionEntity {
  * Pivot: user ↔ role. References the user BY ID ONLY — this package NEVER defines or
  * owns a users table. `userType` lets the same table key polymorphic principals
  * (mirrors nestjs-context's `UserRef` shape).
+ *
+ * `tenantId` (post-v1, defaulted to {@link GLOBAL_TENANT} = `''`) scopes the
+ * assignment to a tenant: an empty value = global (applies in every tenant), a
+ * non-empty value = only within that tenant. It is part of the composite PK so the
+ * same `(user, role)` can be granted independently in multiple tenants while staying
+ * idempotent per tenant. Defaulted (not nullable) so the column belongs to the PK
+ * with portable uniqueness — see {@link GLOBAL_TENANT}.
  */
 @Entity({ name: DEFAULT_TABLE_NAMES.userRole })
 @Index(['userType', 'userId'])
@@ -80,6 +98,28 @@ export class UserRoleEntity {
 
   @PrimaryColumn({ type: 'varchar', length: 191 })
   roleId!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 191, default: GLOBAL_TENANT })
+  tenantId!: string;
+}
+
+/**
+ * Pivot: user ↔ permission (a DIRECT grant, no role needed — Laravel/spatie's
+ * `$user->givePermissionTo(...)`). Mirrors {@link UserRoleEntity}: the user is
+ * referenced BY ID ONLY and `userType` keys polymorphic principals. Composite PK
+ * `(userType, userId, permissionId)`.
+ */
+@Entity({ name: DEFAULT_TABLE_NAMES.userPermission })
+@Index(['userType', 'userId'])
+export class UserPermissionEntity {
+  @PrimaryColumn({ type: 'varchar', length: 191 })
+  userType!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 191 })
+  userId!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 191 })
+  permissionId!: string;
 }
 
 /** All entities, in dependency order — convenient for `entities: [...]` registration. */
@@ -88,4 +128,5 @@ export const AUTHZ_ENTITIES = [
   PermissionEntity,
   RolePermissionEntity,
   UserRoleEntity,
+  UserPermissionEntity,
 ] as const;

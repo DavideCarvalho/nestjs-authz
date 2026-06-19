@@ -147,6 +147,111 @@ export function hydrateResource(
  */
 export type CanResolver = (ability: string, resource?: ResourceRef) => boolean | Promise<boolean>;
 
+/** One item in a {@link CanBatchResolver} request. */
+export interface BatchAbilityRequest {
+  ability: string;
+  resource?: ResourceRef;
+}
+
+/** One item in a {@link CanBatchResolver} result: the input plus its verdict. */
+export interface BatchAbilityResult {
+  ability: string;
+  resource?: ResourceRef;
+  allowed: boolean;
+}
+
+/**
+ * The batch resolver returned by {@link createCanBatch}. Always returns a Promise
+ * (even when fully cached, for a uniform call site).
+ */
+export type CanBatchResolver = (items: BatchAbilityRequest[]) => Promise<BatchAbilityResult[]>;
+
+/**
+ * Build a `canBatch(items)` bound to `store`. Designed for list pages: peek every
+ * item synchronously, then POST ONLY the cache-misses to the endpoint in a SINGLE
+ * array request (instead of one request per card) and merge the verdicts back in
+ * the original order.
+ *
+ * - **All cache hits** → resolves with no request.
+ * - **`fallback: 'deny'`** (default) → misses resolve to `false`, still no request.
+ * - **`fallback: 'fetch'`** → the misses are sent as `[{ ability, resource? }, ...]`
+ *   to the endpoint, which returns `[{ ability, resource?, allowed }, ...]` in the
+ *   same order; a non-ok/failed response denies all misses.
+ *
+ * Mirrors {@link createCan}'s options and the server's batch `POST /authz/can`.
+ */
+export function createCanBatch(
+  store: AbilityStore,
+  options: AbilityStoreOptions = {},
+): CanBatchResolver {
+  const fallback = options.fallback ?? 'deny';
+  const endpoint = options.endpoint ?? '/authz/can';
+
+  return async (items: BatchAbilityRequest[]): Promise<BatchAbilityResult[]> => {
+    const results: BatchAbilityResult[] = new Array(items.length);
+    const misses: Array<{ index: number; item: BatchAbilityRequest }> = [];
+
+    // Tier 1: answer hydrated decisions synchronously.
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item) continue;
+      const cached = store.peek(item.ability, item.resource);
+      if (cached !== undefined) {
+        results[i] = makeResult(item, cached);
+      } else {
+        misses.push({ index: i, item });
+      }
+    }
+
+    if (misses.length === 0) return results;
+
+    // Tier 2: deny misses unless configured to fetch them.
+    if (fallback === 'deny') {
+      for (const { index, item } of misses) results[index] = makeResult(item, false);
+      return results;
+    }
+
+    const doFetch = options.fetchImpl ?? globalThis.fetch;
+    if (typeof doFetch !== 'function') {
+      for (const { index, item } of misses) results[index] = makeResult(item, false);
+      return results;
+    }
+
+    // Tier 3: ONE request for ALL misses.
+    const body = misses.map(({ item }) => ({
+      ability: item.ability,
+      resource: item.resource ? { type: item.resource.type, id: item.resource.id ?? null } : null,
+    }));
+
+    let verdicts: boolean[] = [];
+    try {
+      const res = await doFetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Array<{ allowed?: boolean }> | null;
+        if (Array.isArray(data)) verdicts = data.map((d) => d?.allowed === true);
+      }
+    } catch {
+      verdicts = [];
+    }
+
+    misses.forEach(({ index, item }, k) => {
+      results[index] = makeResult(item, verdicts[k] === true);
+    });
+    return results;
+  };
+}
+
+/** Build a {@link BatchAbilityResult}, attaching `resource` only when present. */
+function makeResult(item: BatchAbilityRequest, allowed: boolean): BatchAbilityResult {
+  return item.resource === undefined
+    ? { ability: item.ability, allowed }
+    : { ability: item.ability, resource: item.resource, allowed };
+}
+
 /**
  * Build a `can(ability, resource?)` bound to `store`.
  *

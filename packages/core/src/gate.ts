@@ -1,11 +1,20 @@
 import { ForbiddenException, Inject, Injectable, Optional, type Type } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import type { ContextAccessor, UserRef } from './context-accessor.js';
+import type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
 import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js';
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
+import { PermissionCache } from './permission-cache.js';
+import { permissionSatisfied } from './permission-matcher.js';
 import type { PermissionProvider } from './permission-provider.js';
 import { PolicyRegistry } from './policy-registry.js';
 import { type RoleProvider, type RoleResolver, defaultRoleResolver } from './role-provider.js';
+import {
+  type ScopeConstraint,
+  type ScopeMethod,
+  normalizeScope,
+  scopeAll,
+  scopeNone,
+} from './scope.js';
 import {
   AUTHZ_MODULE_OPTIONS,
   CONTEXT_ACCESSOR,
@@ -13,19 +22,93 @@ import {
   ROLE_PROVIDER,
 } from './tokens.js';
 import type {
+  AfterHook,
   AuthzModuleOptions,
   GateFn,
   PolicyBeforeHook,
   PolicyInstance,
+  PolicyResult,
   Resource,
   SuperAdminHook,
   User,
 } from './types.js';
 
+/**
+ * A normalized hook/policy return: an explicit verdict (or `undefined` = "no
+ * opinion / fall through") plus an optional deny message. Bare booleans, the
+ * richer `{ allowed, message }` shape, and nullish all map here.
+ */
+interface NormalizedResult {
+  allowed: boolean | undefined;
+  message?: string;
+}
+
+/** Normalize a `boolean | PolicyResponse | null | undefined` into a {@link NormalizedResult}. */
+function normalizeResult(value: PolicyResult | undefined): NormalizedResult {
+  if (value == null) return { allowed: undefined };
+  if (typeof value === 'boolean') return { allowed: value };
+  // `exactOptionalPropertyTypes`: only attach `message` when actually present.
+  return value.message === undefined
+    ? { allowed: Boolean(value.allowed) }
+    : { allowed: Boolean(value.allowed), message: value.message };
+}
+
+/**
+ * Attach `message` to a decision only when defined (honors `exactOptionalPropertyTypes`,
+ * which forbids an explicit `message: undefined` on an optional property).
+ */
+function withMessage<T extends { reason: AuthzDecisionReason; allowed: boolean | undefined }>(
+  decision: T,
+  message: string | undefined,
+): T & { message?: string } {
+  return message === undefined ? decision : { ...decision, message };
+}
+
+/**
+ * Build the `ForbiddenException` for a denied `authorize(...)`, surfacing the
+ * decision's `reason` (and the policy/hook `message` when present) instead of
+ * discarding it. The message string defaults to the generic `Unauthorized: <ability>`
+ * for backward compatibility; the structured body carries `ability` + `reason` so a
+ * 403 is debuggable by clients and the diagnostics watcher alike.
+ */
+function forbidden(
+  ability: string,
+  decision: { reason: AuthzDecisionReason; message?: string },
+): ForbiddenException {
+  const message = decision.message ?? `Unauthorized: ${ability}`;
+  return new ForbiddenException({
+    statusCode: 403,
+    error: 'Forbidden',
+    message,
+    ability,
+    reason: decision.reason,
+  });
+}
+
 // A sentinel marking "no user resolved" distinct from a legitimately-`undefined`
 // user. `forUser(undefined)` explicitly authorizes an anonymous user.
 const NO_USER = Symbol('authz:no-user');
 type MaybeUser = User | typeof NO_USER;
+
+/**
+ * Key under which the per-request {@link PermissionCache} is stashed on the
+ * nestjs-context store. `Symbol.for` so the same key resolves across copies of
+ * this module (e.g. multiple installs in a monorepo) sharing one store.
+ */
+const REQUEST_PERMISSION_CACHE = Symbol.for('@dudousxd/nestjs-authz:request-permission-cache');
+
+/** A single item in a {@link Gate.allowsMany} batch. */
+export interface BatchAbility {
+  ability: string;
+  resource?: Resource;
+}
+
+/** A single result from a {@link Gate.allowsMany} batch: the input plus its verdict. */
+export interface BatchResult {
+  ability: string;
+  resource?: Resource;
+  allowed: boolean;
+}
 
 /**
  * Laravel-style authorization Gate.
@@ -42,6 +125,7 @@ type MaybeUser = User | typeof NO_USER;
 export class Gate {
   private readonly gates = new Map<string, GateFn>();
   private readonly superAdmin: SuperAdminHook | undefined;
+  private readonly after: AfterHook | undefined;
   private readonly resolveUser: AuthzModuleOptions['resolveUser'];
   private readonly roleResolver: RoleResolver;
 
@@ -73,6 +157,7 @@ export class Gate {
     private readonly roleProvider?: RoleProvider,
   ) {
     this.superAdmin = options?.superAdmin;
+    this.after = options?.after;
     this.resolveUser = options?.resolveUser;
     this.roleResolver = options?.resolveRoles ?? defaultRoleResolver;
   }
@@ -133,6 +218,33 @@ export class Gate {
     return this.roleProviderCached;
   }
 
+  /**
+   * The per-request {@link PermissionCache}, stashed on the nestjs-context store so
+   * every check within one HTTP request shares a single `getPermissions` fetch
+   * (kills the N+1 a list page would otherwise cause). Returns `undefined` when no
+   * context store is available (standalone use), in which case callers fall back to
+   * a transient cache (e.g. one per `allowsMany` batch) or no memoization.
+   */
+  private resolveRequestCache(): PermissionCache | undefined {
+    const context = this.resolveContext();
+    // `get()` is part of the ContextAccessor contract but a stub/partial accessor
+    // may omit it (or it may throw outside a request scope) — degrade to "no
+    // request cache" rather than failing the check.
+    if (!context || typeof context.get !== 'function') return undefined;
+    let store: ContextStore | undefined;
+    try {
+      store = context.get();
+    } catch {
+      store = undefined;
+    }
+    if (!store) return undefined;
+    const existing = (store as Record<symbol, unknown>)[REQUEST_PERMISSION_CACHE];
+    if (existing instanceof PermissionCache) return existing;
+    const cache = new PermissionCache();
+    (store as Record<symbol, unknown>)[REQUEST_PERMISSION_CACHE] = cache;
+    return cache;
+  }
+
   /** Register an ad-hoc, model-less gate resolved by `ability` name. */
   define(ability: string, fn: GateFn): this {
     this.gates.set(ability, fn);
@@ -187,7 +299,7 @@ export class Gate {
   // --- public API (operates on the current/context user) ---
 
   async allows(ability: string, resource?: Resource): Promise<boolean> {
-    return this.check(await this.currentUser(), ability, resource);
+    return this.check(await this.currentUser(), ability, resource, this.resolveRequestCache());
   }
 
   async denies(ability: string, resource?: Resource): Promise<boolean> {
@@ -195,9 +307,46 @@ export class Gate {
   }
 
   async authorize(ability: string, resource?: Resource): Promise<void> {
-    if (!(await this.allows(ability, resource))) {
-      throw new ForbiddenException(`Unauthorized: ${ability}`);
-    }
+    const decision = await this.decide(
+      await this.currentUser(),
+      ability,
+      resource,
+      this.resolveRequestCache(),
+    );
+    if (!decision.allowed) throw forbidden(ability, decision);
+  }
+
+  /**
+   * Authorize MANY abilities for the current (context) user in a single pass. The
+   * user is resolved ONCE and a single {@link PermissionCache} is shared across all
+   * items, so a list page (N cards) costs one user resolution + at most one
+   * permission fetch instead of N of each. Order is preserved; each result echoes
+   * its input `ability`/`resource` plus the `allowed` verdict.
+   *
+   * Fault-isolating: an item whose ability is unresolved/ambiguous denies just
+   * THAT item (it does not throw and abort the batch) — a batch is a best-effort
+   * verdict list, not an enforcement gate.
+   */
+  async allowsMany(items: BatchAbility[]): Promise<BatchResult[]> {
+    return this.checkMany(await this.currentUser(), items);
+  }
+
+  /**
+   * Resolve the QUERY SCOPE constraint for the current (context) user against
+   * `entity` — the `accessibleBy` / Pundit `policy_scope` concept. Returns an
+   * ORM-neutral {@link ScopeConstraint} an adapter (e.g. the TypeORM `applyScope`
+   * helper) turns into a parameterized `WHERE`.
+   *
+   * Consistent with the Gate's single-resource semantics:
+   * - super-admin / before-grant / permission-provider grant → `allow-all`,
+   * - anonymous, or no policy/scope → `deny-all` (default-deny),
+   * - otherwise the policy's `scope` (or `viewAny`-style) constraint.
+   *
+   * `ability` (default `'viewAny'`) names the permission-provider check used for
+   * the allow-all grant and the policy fallback method.
+   */
+  async scope(entity: Type<unknown>, ability = 'viewAny'): Promise<ScopeConstraint> {
+    return this.resolveScope(await this.currentUser(), entity, ability);
   }
 
   // --- coarse role checks (operate on the current/context user) ---
@@ -216,12 +365,159 @@ export class Gate {
 
   /** @internal */
   allowsForUser(user: MaybeUser, ability: string, resource?: Resource): Promise<boolean> {
-    return this.check(user, ability, resource);
+    return this.check(user, ability, resource, this.resolveRequestCache());
+  }
+
+  /** @internal — batch check for an explicit/bound user (see {@link allowsMany}). */
+  allowsManyForUser(user: MaybeUser, items: BatchAbility[]): Promise<BatchResult[]> {
+    return this.checkMany(user, items);
+  }
+
+  /**
+   * Run a batch of checks against one already-resolved user, sharing a single
+   * {@link PermissionCache} so the provider's `getPermissions` runs at most once.
+   * Prefers the per-request cache (so the batch also coalesces with other checks in
+   * the same request); falls back to a transient per-batch cache when standalone.
+   */
+  private async checkMany(user: MaybeUser, items: BatchAbility[]): Promise<BatchResult[]> {
+    const cache = this.resolveRequestCache() ?? new PermissionCache();
+    const out: BatchResult[] = [];
+    for (const item of items) {
+      let allowed: boolean;
+      try {
+        allowed = await this.check(user, item.ability, item.resource, cache);
+      } catch {
+        // Unresolved/ambiguous ability → deny just this item (don't abort the batch).
+        allowed = false;
+      }
+      out.push(
+        item.resource === undefined
+          ? { ability: item.ability, allowed }
+          : { ability: item.ability, resource: item.resource, allowed },
+      );
+    }
+    return out;
+  }
+
+  /** @internal — used by {@link BoundGate.authorize} to surface the deny reason/message. */
+  decideForUser(
+    user: MaybeUser,
+    ability: string,
+    resource?: Resource,
+  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
+    return this.decide(user, ability, resource, this.resolveRequestCache());
   }
 
   /** @internal */
   hasAnyRoleForUser(user: MaybeUser, roles: string[]): Promise<boolean> {
     return this.checkRoles(user, roles);
+  }
+
+  /** @internal — used by {@link BoundGate.scope}. */
+  scopeForUser(
+    user: MaybeUser,
+    entity: Type<unknown>,
+    ability = 'viewAny',
+  ): Promise<ScopeConstraint> {
+    return this.resolveScope(user, entity, ability);
+  }
+
+  /**
+   * Resolve a query-scope constraint for `entity`, mirroring {@link resolveBase}'s
+   * grant order so scoping stays consistent with single-resource decisions:
+   *
+   * 1. super-admin hook grants → `allow-all`;
+   * 2. (authenticated) permission-provider grant for `ability` → `allow-all`;
+   * 3. the policy's `scope` (or `viewAny`-style) method → its constraint;
+   * 4. otherwise (anonymous, no policy, no scope method) → `deny-all`.
+   *
+   * The policy `before` hook is also honored as an allow/deny grant before the
+   * scope method runs, so a policy that broadly allows/denies in `before` scopes
+   * the same way it decides.
+   */
+  private async resolveScope(
+    maybeUser: MaybeUser,
+    entity: Type<unknown>,
+    ability: string,
+  ): Promise<ScopeConstraint> {
+    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
+
+    // 1. Global super-admin hook → allow-all (a `false` does not deny here, it
+    //    just falls through, mirroring resolveBase's grant-or-fall-through).
+    const sa = normalizeResult(await this.superAdmin?.(user, ability));
+    if (sa.allowed === true) return scopeAll;
+
+    // 2. Permission-provider grant for the scope ability → allow-all.
+    if (
+      maybeUser !== NO_USER &&
+      (await this.permissionProviderGrants(user, ability, undefined, this.resolveRequestCache()))
+    ) {
+      return scopeAll;
+    }
+
+    // 3. Policy scope (or viewAny-style fallback) method.
+    const policy = this.policies.forResource(entity);
+    if (policy) {
+      const scopeMethod = this.resolveScopeMethod(policy, ability);
+      if (scopeMethod) {
+        const before = (policy as PolicyInstance).before as PolicyBeforeHook | undefined;
+        if (typeof before === 'function') {
+          const result = normalizeResult(await before.call(policy, user, ability));
+          if (result.allowed === true) return scopeAll;
+          if (result.allowed === false) return scopeNone;
+        }
+        // Anonymous users see no rows (default-deny, like the single-resource path).
+        if (maybeUser === NO_USER) return scopeNone;
+        return normalizeScope(await scopeMethod.call(policy, user, entity));
+      }
+    }
+
+    // 4. No way to scope → deny-all.
+    return scopeNone;
+  }
+
+  /**
+   * Pick the policy's scope method: the conventional `scope`, else the `ability`
+   * method (e.g. `viewAny`) when it is scope-shaped. Returns `undefined` when the
+   * policy declares neither.
+   */
+  private resolveScopeMethod(policy: PolicyInstance, ability: string): ScopeMethod | undefined {
+    const scope = (policy as Record<string, unknown>).scope;
+    if (typeof scope === 'function') return scope as ScopeMethod;
+    const fallback = (policy as Record<string, unknown>)[ability];
+    if (typeof fallback === 'function') return fallback as ScopeMethod;
+    return undefined;
+  }
+
+  /**
+   * Whether the registered {@link PermissionProvider} grants `ability` for an authenticated `user` —
+   * the RBAC "before" grant shared by the single-resource ({@link resolveBase}) and scope
+   * ({@link resolveScope}) paths, single-sourced here so the grant order can't drift between them.
+   *
+   * Grant-only: a `false`/nullish result is "no grant", never a deny. When the provider lists the
+   * user's granted permissions, segment-based wildcard matching runs in the core (a granted
+   * `posts.*` satisfies `posts.update`, `*` satisfies anything) regardless of adapter; a nullish
+   * list defers to the exact-match `hasPermission`. The granted set is fetched through `cache` when
+   * one is supplied, else via a direct fetch.
+   */
+  private async permissionProviderGrants(
+    user: User,
+    ability: string,
+    resource: Resource | undefined,
+    cache: PermissionCache | undefined,
+  ): Promise<boolean> {
+    const provider = this.resolvePermissionProvider();
+    if (!provider) return false;
+    if (typeof provider.getPermissions === 'function') {
+      const satisfied = cache
+        ? await cache.satisfies(provider, user, ability)
+        : await (async () => {
+            const granted = await provider.getPermissions?.(user);
+            return granted == null ? undefined : permissionSatisfied(granted, ability);
+          })();
+      if (satisfied === true) return true;
+    }
+    return (await provider.hasPermission(user, ability, resource)) === true;
   }
 
   /**
@@ -259,49 +555,98 @@ export class Gate {
     maybeUser: MaybeUser,
     ability: string,
     resource?: Resource,
+    cache?: PermissionCache,
   ): Promise<boolean> {
-    const { allowed, reason } = await this.resolve(maybeUser, ability, resource);
+    return (await this.decide(maybeUser, ability, resource, cache)).allowed;
+  }
+
+  /**
+   * Resolve a decision AND publish it for observers. Returns the full decision
+   * (verdict + reason + optional deny message) so {@link authorize} can surface the
+   * `reason`/`message` on the thrown `ForbiddenException`. {@link check} discards
+   * everything but the verdict.
+   */
+  private async decide(
+    maybeUser: MaybeUser,
+    ability: string,
+    resource?: Resource,
+    cache?: PermissionCache,
+  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
+    const decision = await this.resolve(maybeUser, ability, resource, cache);
     // Emit the decision for observers (e.g. the generic @dudousxd/nestjs-diagnostics-telescope watcher).
     // Loosely coupled via a diagnostics channel — zero-overhead when no subscriber,
     // and a publish failure can never affect the verdict. Only reached decisions are
     // emitted; an unresolved/ambiguous ability throws above and is intentionally silent.
     publishAuthzDecision(
       ability,
-      allowed,
-      reason,
+      decision.allowed,
+      decision.reason,
       maybeUser === NO_USER ? undefined : maybeUser,
       resource,
     );
-    return allowed;
+    return decision;
   }
 
   /**
-   * Resolve an ability to a verdict plus the path that decided it. Throws
+   * Resolve an ability to a final verdict, the path that decided it, and an optional
+   * deny message. Runs the global `after` hook over the base decision (see
+   * {@link AfterHook} for override semantics). Throws
    * {@link AbilityNotResolvedException}/{@link AmbiguousAbilityException} when no
-   * decision can be reached (those paths emit no decision).
+   * decision can be reached (those paths emit no decision and skip `after`).
    */
   private async resolve(
     maybeUser: MaybeUser,
     ability: string,
     resource?: Resource,
-  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason }> {
+    cache?: PermissionCache,
+  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
+    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
+    const base = await this.resolveBase(maybeUser, ability, resource, cache);
+
+    // Global `after` hook (Laravel `Gate::after`). It may OVERRIDE only when the
+    // base path produced no explicit verdict (`base.allowed === undefined`);
+    // otherwise it is observe-only. A nullish/void return never changes anything.
+    if (this.after) {
+      const observed = base.allowed; // undefined ⇒ policy/gate had no opinion
+      const after = normalizeResult(await this.after(user, ability, observed, resource));
+      if (observed === undefined && after.allowed !== undefined) {
+        return withMessage({ allowed: after.allowed, reason: 'after' }, after.message);
+      }
+    }
+
+    // Finalize: a base with "no opinion" (undefined) denies by default.
+    return withMessage({ allowed: base.allowed === true, reason: base.reason }, base.message);
+  }
+
+  /**
+   * The pre-`after` resolution. `allowed` is `undefined` when the deciding path
+   * (policy method / ad-hoc gate) returned a nullish value — "no opinion" — which
+   * lets the {@link AfterHook} supply a verdict before the default-deny finalize.
+   */
+  private async resolveBase(
+    maybeUser: MaybeUser,
+    ability: string,
+    resource?: Resource,
+    cache?: PermissionCache,
+  ): Promise<{ allowed: boolean | undefined; reason: AuthzDecisionReason; message?: string }> {
     const user: User = maybeUser === NO_USER ? undefined : maybeUser;
 
     // Global super-admin hook first.
-    const sa = await this.superAdmin?.(user, ability);
-    if (sa === true) return { allowed: true, reason: 'super-admin' };
-    if (sa === false) return { allowed: false, reason: 'super-admin' };
+    const sa = normalizeResult(await this.superAdmin?.(user, ability));
+    if (sa.allowed === true)
+      return withMessage({ allowed: true, reason: 'super-admin' }, sa.message);
+    if (sa.allowed === false)
+      return withMessage({ allowed: false, reason: 'super-admin' }, sa.message);
 
     // RBAC seam (Laravel/spatie `Gate::before` grant): if a PermissionProvider is
     // registered and the (authenticated) user holds the named permission, grant it.
     // Grant-only — a `false`/`undefined` result falls through to normal resolution,
     // so this never *denies* an ability a policy/gate would otherwise allow.
-    if (maybeUser !== NO_USER) {
-      const provider = this.resolvePermissionProvider();
-      if (provider) {
-        const granted = await provider.hasPermission(user, ability, resource);
-        if (granted === true) return { allowed: true, reason: 'permission-provider' };
-      }
+    if (
+      maybeUser !== NO_USER &&
+      (await this.permissionProviderGrants(user, ability, resource, cache))
+    ) {
+      return { allowed: true, reason: 'permission-provider' };
     }
 
     const policy = this.resolvePolicy(ability, resource);
@@ -314,16 +659,24 @@ export class Gate {
       if (typeof method === 'function') {
         const before = (policy as PolicyInstance).before as PolicyBeforeHook | undefined;
         if (typeof before === 'function') {
-          const result = await before.call(policy, user, ability);
-          if (result === true) return { allowed: true, reason: 'policy-before' };
-          if (result === false) return { allowed: false, reason: 'policy-before' };
+          const result = normalizeResult(await before.call(policy, user, ability));
+          if (result.allowed === true)
+            return withMessage({ allowed: true, reason: 'policy-before' }, result.message);
+          if (result.allowed === false)
+            return withMessage({ allowed: false, reason: 'policy-before' }, result.message);
         }
         // Anonymous users are denied unless a hook granted access above.
         if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
-        const allowed = Boolean(
-          await (method as (...a: unknown[]) => unknown).call(policy, user, resource),
+        const result = normalizeResult(
+          (await (method as (...a: unknown[]) => unknown).call(
+            policy,
+            user,
+            resource,
+          )) as PolicyResult,
         );
-        return { allowed, reason: 'policy' };
+        // A nullish policy return is "no opinion" → leave `allowed` undefined so
+        // an `after` hook may decide; otherwise it default-denies in `resolve`.
+        return withMessage({ allowed: result.allowed, reason: 'policy' }, result.message);
       }
     }
 
@@ -331,7 +684,8 @@ export class Gate {
     const gate = this.gates.get(ability);
     if (gate) {
       if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
-      return { allowed: Boolean(await gate(user, resource)), reason: 'gate' };
+      const result = normalizeResult((await gate(user, resource)) as PolicyResult);
+      return withMessage({ allowed: result.allowed, reason: 'gate' }, result.message);
     }
 
     throw new AbilityNotResolvedException(ability);
@@ -380,10 +734,19 @@ export class BoundGate {
     return !(await this.allows(ability, resource));
   }
 
+  /** Batch-authorize many abilities for the bound user in one pass (see {@link Gate.allowsMany}). */
+  allowsMany(items: BatchAbility[]): Promise<BatchResult[]> {
+    return this.gate.allowsManyForUser(this.user, items);
+  }
+
+  /** Resolve the query-scope constraint for the bound user (see {@link Gate.scope}). */
+  scope(entity: Type<unknown>, ability = 'viewAny'): Promise<ScopeConstraint> {
+    return this.gate.scopeForUser(this.user, entity, ability);
+  }
+
   async authorize(ability: string, resource?: Resource): Promise<void> {
-    if (!(await this.allows(ability, resource))) {
-      throw new ForbiddenException(`Unauthorized: ${ability}`);
-    }
+    const decision = await this.gate.decideForUser(this.user, ability, resource);
+    if (!decision.allowed) throw forbidden(ability, decision);
   }
 
   /** True when the bound user holds `role`. */

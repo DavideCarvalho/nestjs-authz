@@ -21,3 +21,5 @@ export type {
   UserRefMapper,
 } from './authz-rbac.module.js';
 export type { AuthzStoreOptions, UserRef, UserRefInput } from './types.js';
+export { applyScope, compileScope } from './scope.js';
+export type { ScopeResolver } from './scope.js';

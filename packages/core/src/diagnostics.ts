@@ -40,6 +40,7 @@ export type AuthzDecisionReason =
   | 'policy-before'
   | 'policy'
   | 'gate'
+  | 'after'
   | 'anonymous';
 
 /**

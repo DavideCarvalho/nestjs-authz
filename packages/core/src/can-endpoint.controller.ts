@@ -19,6 +19,21 @@ export interface CanResponseBody {
 }
 
 /**
+ * Batch request body: an array of `{ ability, resource? }` items. The endpoint
+ * accepts EITHER a single {@link CanRequestBody} or this array — a list page can
+ * authorize all of its cards in ONE round-trip instead of N. Mirrors the payload
+ * the client's `createCanBatch` emits.
+ */
+export type CanBatchRequestBody = CanRequestBody[];
+
+/** One batch result: echoes the item's `ability`/`resource` plus the verdict. */
+export interface CanBatchResultItem {
+  ability: string;
+  resource?: { type: string; id?: string | number } | null;
+  allowed: boolean;
+}
+
+/**
  * Build the opt-in fallback controller class, mounted at `path`. Kept as a
  * factory so the route path is configurable via `AuthzModule.forRoot({ canEndpoint })`.
  *
@@ -48,7 +63,13 @@ export function createCanController(path: string): Type<unknown> {
     ) {}
 
     @HttpPost()
-    async can(@Body() body: CanRequestBody): Promise<CanResponseBody> {
+    async can(
+      @Body() body: CanRequestBody | CanBatchRequestBody,
+    ): Promise<CanResponseBody | CanBatchResultItem[]> {
+      // Array body → batch path (one user/permission resolution for the whole list).
+      if (Array.isArray(body)) {
+        return this.canBatch(body);
+      }
       const ability = body?.ability;
       if (typeof ability !== 'string' || ability.length === 0) {
         return { allowed: false };
@@ -64,6 +85,65 @@ export function createCanController(path: string): Type<unknown> {
         // Unresolved/ambiguous ability — fail closed.
         return { allowed: false };
       }
+    }
+
+    /**
+     * Batch verdicts for an array body. Rehydrates each item's resource shim (via
+     * `resourceLoaders`, same as the single path), then resolves the whole list in
+     * ONE pass via `gate.forUser(currentUser).allowsMany(...)` so the user and the
+     * permission set are resolved once. Each result echoes the original
+     * `ability`/`resource` so the client can map verdicts back to its cards. A
+     * not-found loader, an empty ability, or an unresolved ability denies that item
+     * (never fails the whole batch).
+     */
+    private async canBatch(items: CanBatchRequestBody): Promise<CanBatchResultItem[]> {
+      // Validate + rehydrate each item up front. `verdicts[i] === false` already
+      // pins the outright-denials (bad ability / not-found resource); `undefined`
+      // means "send to the batch". `batchInput` carries the surviving items plus
+      // their original index so verdicts map back in order.
+      const verdicts: Array<boolean | undefined> = new Array(items.length).fill(undefined);
+      const echo: Array<CanRequestBody['resource'] | undefined> = new Array(items.length);
+      const batchInput: Array<{ index: number; ability: string; resource?: object }> = [];
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        echo[i] = item?.resource ?? undefined;
+        const ability = item?.ability;
+        if (typeof ability !== 'string' || ability.length === 0) {
+          verdicts[i] = false;
+          continue;
+        }
+        const target = await this.rehydrate(item?.resource ?? undefined);
+        if (target === null) {
+          // A registered loader produced nothing → not found → deny this item.
+          verdicts[i] = false;
+          continue;
+        }
+        batchInput.push(
+          target === undefined ? { index: i, ability } : { index: i, ability, resource: target },
+        );
+      }
+
+      // ONE pass over the surviving items: user + permission set resolved once.
+      // `allowsMany` is fault-isolating, so an unresolved ability denies just its item.
+      const results = await this.gate.allowsMany(
+        batchInput.map((b) =>
+          b.resource === undefined
+            ? { ability: b.ability }
+            : { ability: b.ability, resource: b.resource },
+        ),
+      );
+      results.forEach((r, k) => {
+        const original = batchInput[k];
+        if (original) verdicts[original.index] = r.allowed;
+      });
+
+      return items.map((item, i) => {
+        const ability = typeof item?.ability === 'string' ? item.ability : '';
+        const allowed = verdicts[i] ?? false;
+        const resource = echo[i];
+        return resource == null ? { ability, allowed } : { ability, resource, allowed };
+      });
     }
 
     /**

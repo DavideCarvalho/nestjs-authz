@@ -19,6 +19,16 @@ import type { Resource, User } from './types.js';
  * when anonymous). `permission` is the ability name passed to `gate.allows(...)`.
  * `resource` is the dispatch target, when one was given; providers MAY ignore it —
  * model-less, named-ability grants (e.g. the typeorm RBAC adapter) do.
+ *
+ * ## Wildcard / hierarchical permissions
+ *
+ * To support Laravel/spatie-style wildcard grants (a granted `posts.*` satisfying a
+ * check for `posts.update`, or `*` satisfying anything), a provider may ALSO expose
+ * {@link PermissionProvider.getPermissions} — the user's full granted permission set.
+ * When present, the core applies segment-based wildcard matching against that set
+ * (see `permission-matcher.ts`), so wildcard semantics work regardless of adapter
+ * and without each adapter re-implementing the matching. `hasPermission` remains the
+ * exact-match fast path (and the sole contract for providers that don't list grants).
  */
 export interface PermissionProvider {
   hasPermission(
@@ -26,4 +36,12 @@ export interface PermissionProvider {
     permission: string,
     resource?: Resource,
   ): boolean | undefined | Promise<boolean | undefined>;
+  /**
+   * Optional: the full set of permission names granted to `user` (each possibly a
+   * wildcard pattern such as `posts.*` or `*`). When implemented, the core matches
+   * the checked ability against this set using segment-based wildcard semantics, so
+   * a granted `posts.*` satisfies `posts.update`. Return `undefined` to defer to
+   * `hasPermission` (e.g. for an anonymous/unmappable user).
+   */
+  getPermissions?(user: User): Iterable<string> | undefined | Promise<Iterable<string> | undefined>;
 }

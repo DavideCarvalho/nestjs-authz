@@ -1,30 +1,26 @@
 import 'reflect-metadata';
 import { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
 import { Test } from '@nestjs/testing';
-import { DataSource } from 'typeorm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DataSource } from 'typeorm';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
-import { AUTHZ_ENTITIES } from '../src/entities.js';
 import { TypeOrmAuthzStore } from '../src/typeorm-authz.store.js';
+import {
+  type AuthzFixture,
+  describeIntegration,
+  freshAuthzDataSource,
+  targetDialect,
+} from './support/datasource.js';
 
-async function freshDataSource(): Promise<DataSource> {
-  const ds = new DataSource({
-    type: 'sqlite',
-    database: ':memory:',
-    entities: [...AUTHZ_ENTITIES],
-    synchronize: false, // tables don't exist until ensureSchema()
-  });
-  await ds.initialize();
-  return ds;
-}
-
-describe('TypeOrmAuthzStore (integration, sqlite)', () => {
+describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () => {
+  let fx: AuthzFixture;
   let ds: DataSource;
   let store: TypeOrmAuthzStore;
 
   beforeEach(async () => {
-    ds = await freshDataSource();
-    store = new TypeOrmAuthzStore(ds);
+    fx = await freshAuthzDataSource();
+    ds = fx.ds;
+    store = new TypeOrmAuthzStore(ds, fx.options);
     await store.ensureSchema();
   });
 
@@ -75,25 +71,27 @@ describe('TypeOrmAuthzStore (integration, sqlite)', () => {
   });
 
   it('honors BYO table names', async () => {
-    const customDs = await freshDataSource();
-    const custom = new TypeOrmAuthzStore(customDs, {
-      tableNames: {
-        roles: 'rbac_roles',
-        permissions: 'rbac_perms',
-        rolePermission: 'rbac_role_perm',
-        userRole: 'rbac_user_role',
-      },
-    });
-    await custom.ensureSchema();
-    const qr = customDs.createQueryRunner();
-    expect(await qr.hasTable('rbac_roles')).toBe(true);
-    expect(await qr.hasTable('rbac_user_role')).toBe(true);
+    // A second fixture, but with explicit custom names (still unique-prefixed so the
+    // shared container stays isolated) — proves the store qualifies every reference by
+    // the configured name rather than a hard-coded default.
+    const custom = await freshAuthzDataSource();
+    const names = {
+      roles: `${custom.names.roles}_rbac`,
+      permissions: `${custom.names.permissions}_rbac`,
+      rolePermission: `${custom.names.rolePermission}_rbac`,
+      userRole: `${custom.names.userRole}_rbac`,
+    };
+    const customStore = new TypeOrmAuthzStore(custom.ds, { tableNames: names });
+    await customStore.ensureSchema();
+    const qr = custom.ds.createQueryRunner();
+    expect(await qr.hasTable(names.roles)).toBe(true);
+    expect(await qr.hasTable(names.userRole)).toBe(true);
     await qr.release();
 
-    await custom.givePermissionToRole('editor', 'posts.publish');
-    await custom.assignRole(5, 'editor');
-    expect(await custom.userHasPermission(5, 'posts.publish')).toBe(true);
-    await customDs.destroy();
+    await customStore.givePermissionToRole('editor', 'posts.publish');
+    await customStore.assignRole(5, 'editor');
+    expect(await customStore.userHasPermission(5, 'posts.publish')).toBe(true);
+    await custom.ds.destroy();
   });
 
   it('Gate.allows consults persisted permissions via the RBAC seam', async () => {
@@ -111,6 +109,28 @@ describe('TypeOrmAuthzStore (integration, sqlite)', () => {
     expect(await gate.forUser({ type: 'user', id: 42 }).allows('posts.publish')).toBe(true);
     // A user without it falls through → unresolved (no policy/gate defines it).
     await expect(gate.forUser({ type: 'user', id: 99 }).allows('posts.publish')).rejects.toThrow();
+
+    await moduleRef.close();
+  });
+
+  it('Gate.allows honors persisted WILDCARD grants (posts.* → posts.update)', async () => {
+    // Persist a wildcard permission; the core matcher should expand it.
+    await store.givePermissionToRole('editor', 'posts.*');
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
+      providers: [PolicyRegistry, Gate],
+    }).compile();
+    await moduleRef.init();
+
+    const gate = moduleRef.get(Gate);
+    const editor = gate.forUser({ type: 'user', id: 42 });
+    // `posts.*` satisfies any posts.* ability.
+    expect(await editor.allows('posts.update')).toBe(true);
+    expect(await editor.allows('posts.publish')).toBe(true);
+    // But not a different namespace → falls through to unresolved.
+    await expect(editor.allows('comments.update')).rejects.toThrow();
 
     await moduleRef.close();
   });

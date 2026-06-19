@@ -86,6 +86,11 @@ describe('nestjsAuthzCodegen', () => {
     expect(out).toContain('const authzCan = createCan(authzStore,');
     // No self-contained fetch POST in the emitted helper anymore.
     expect(out).not.toContain('await fetch(');
+
+    // Also emits a typed batch helper for list pages (one round-trip for many checks).
+    expect(imports).toContain('createCanBatch');
+    expect(out).toContain('const authzCanBatch = createCanBatch(authzStore,');
+    expect(out).toContain('export function canBatch(');
   });
 
   it('emits the resource → abilities map for resource-bound abilities', () => {

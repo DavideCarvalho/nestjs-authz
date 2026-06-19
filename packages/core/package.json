@@ -17,6 +17,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./store-kit": {
+      "types": "./dist/store-kit.d.ts",
+      "import": "./dist/store-kit.js",
+      "default": "./dist/store-kit.js"
     }
   },
   "files": ["dist/", "README.md", "CHANGELOG.md"],

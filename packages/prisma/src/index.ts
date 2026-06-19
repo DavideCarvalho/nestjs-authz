@@ -16,6 +16,6 @@ export type {
   AuthzRbacModuleOptions,
   UserRefMapper,
 } from './authz-rbac.module.js';
-export type { UserRef, UserRefInput } from './types.js';
+export type { UserRef, UserRefInput } from '@dudousxd/nestjs-authz/store-kit';
 export { applyScope, compileScope } from './scope.js';
 export type { PrismaWhere, ScopeResolver } from './scope.js';

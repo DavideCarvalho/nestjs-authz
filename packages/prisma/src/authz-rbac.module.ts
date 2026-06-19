@@ -4,6 +4,7 @@ import {
   ROLE_PROVIDER,
   type RoleProvider,
 } from '@dudousxd/nestjs-authz';
+import type { UserRef } from '@dudousxd/nestjs-authz/store-kit';
 import {
   type DynamicModule,
   Inject,
@@ -16,7 +17,6 @@ import {
 } from '@nestjs/common';
 import { PrismaAuthzStore } from './prisma-authz.store.js';
 import { PRISMA_CLIENT, type PrismaAuthzClientLike } from './prisma-client.js';
-import type { UserRef } from './types.js';
 
 /** Injection token holding the {@link PrismaAuthzStore} the RBAC module manages. */
 export const AUTHZ_RBAC_STORE = Symbol.for('@dudousxd/nestjs-authz-prisma:store');

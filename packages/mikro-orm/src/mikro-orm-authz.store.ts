@@ -1,25 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
 import type { EntityManager, MikroORM } from '@mikro-orm/core';
 import { PermissionEntity, RoleEntity, RolePermissionEntity, UserRoleEntity } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
-import type { UserRef } from './types.js';
 
-/** Normalize a {@link UserRef} to `{ type, id }` with `id` stringified. */
-function normalizeUserRef(ref: UserRef): { type: string; id: string } {
-  if (typeof ref === 'string' || typeof ref === 'number') {
-    return { type: 'user', id: String(ref) };
-  }
-  return { type: ref.type ?? 'user', id: String(ref.id) };
-}
-
-/**
- * A user's effective permissions: the role names they hold and the flattened set of
- * permission names granted by those roles.
- */
-export interface UserAuthz {
-  roles: string[];
-  permissions: string[];
-}
+// Re-exported so `@dudousxd/nestjs-authz-mikro-orm`'s public `UserAuthz` keeps the
+// same import path; canonical definition lives in core's store-kit.
+export type { UserAuthz };
 
 /**
  * MikroORM-backed RBAC store. A plain POJO that receives the `EntityManager` in its

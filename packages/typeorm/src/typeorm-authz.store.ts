@@ -1,26 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
 import type { DataSource } from 'typeorm';
 import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
 import { Placeholders, assertSafeIdentifier } from './sql.js';
-import type { AuthzStoreOptions, TenantScope, UserRef } from './types.js';
+import type { AuthzStoreOptions, TenantScope } from './types.js';
 
-/** Normalize a {@link UserRef} to `{ type, id }` with `id` stringified. */
-function normalizeUserRef(ref: UserRef): { type: string; id: string } {
-  if (typeof ref === 'string' || typeof ref === 'number') {
-    return { type: 'user', id: String(ref) };
-  }
-  return { type: ref.type ?? 'user', id: String(ref.id) };
-}
-
-/**
- * A user's effective permissions: the role names they hold and the flattened set of
- * permission names granted by those roles.
- */
-export interface UserAuthz {
-  roles: string[];
-  permissions: string[];
-}
+// Re-exported so `@dudousxd/nestjs-authz-typeorm`'s public `UserAuthz` keeps the
+// same import path; canonical definition lives in core's store-kit.
+export type { UserAuthz };
 
 /**
  * TypeORM-backed RBAC store. A plain POJO that receives the `DataSource` in its

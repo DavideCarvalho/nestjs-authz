@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.6.2
+
+### Patch Changes
+
+- [`437389a`](https://github.com/DavideCarvalho/nestjs-authz/commit/437389ac0a9bf76f0957fcabedee3fb66ba232e5) - Consume the `context:accessor` capability via `InjectCapability` from `@dudousxd/nestjs-diagnostics/nestjs` instead of a hand-copied `Symbol.for` magic string, and derive `CONTEXT_ACCESSOR` from the `capability()` factory. Resolves to the byte-identical global symbol — fully non-breaking; the `ModuleRef` fallback is unchanged. Bumps the `@dudousxd/nestjs-diagnostics` dependency to `^0.5.0`.
+
 ## 0.6.1
 
 ### Patch Changes

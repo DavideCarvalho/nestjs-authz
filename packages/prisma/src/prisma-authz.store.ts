@@ -1,28 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
 import { PRISMA_CLIENT, type PrismaAuthzClientLike } from './prisma-client.js';
-import type { UserRef } from './types.js';
+
+// Re-exported so `@dudousxd/nestjs-authz-prisma`'s public `UserAuthz` keeps the
+// same import path; canonical definition lives in core's store-kit.
+export type { UserAuthz };
 
 // Optional Nest DI decorators — declared structurally so this package does not need a
 // hard runtime dependency on @nestjs/common for the POJO store (the module supplies the
 // real Inject token). The store is usable as a plain POJO: `new PrismaAuthzStore(client)`.
 import { Inject, Injectable } from '@nestjs/common';
-
-/** Normalize a {@link UserRef} to `{ type, id }` with `id` stringified. */
-function normalizeUserRef(ref: UserRef): { type: string; id: string } {
-  if (typeof ref === 'string' || typeof ref === 'number') {
-    return { type: 'user', id: String(ref) };
-  }
-  return { type: ref.type ?? 'user', id: String(ref.id) };
-}
-
-/**
- * A user's effective permissions: the role names they hold and the flattened set of
- * permission names granted by those roles.
- */
-export interface UserAuthz {
-  roles: string[];
-  permissions: string[];
-}
 
 /**
  * Prisma-backed RBAC store. Receives the app-owned Prisma client via the

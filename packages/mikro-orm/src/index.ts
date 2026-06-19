@@ -20,4 +20,5 @@ export type {
   AuthzRbacModuleOptions,
   UserRefMapper,
 } from './authz-rbac.module.js';
-export type { AuthzStoreOptions, UserRef, UserRefInput } from './types.js';
+export type { AuthzStoreOptions } from './types.js';
+export type { UserRef, UserRefInput } from '@dudousxd/nestjs-authz/store-kit';

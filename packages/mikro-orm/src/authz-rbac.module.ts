@@ -4,6 +4,7 @@ import {
   ROLE_PROVIDER,
   type RoleProvider,
 } from '@dudousxd/nestjs-authz';
+import type { UserRef } from '@dudousxd/nestjs-authz/store-kit';
 import {
   type DynamicModule,
   Inject,
@@ -15,7 +16,6 @@ import {
   type Type,
 } from '@nestjs/common';
 import type { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';
-import type { UserRef } from './types.js';
 
 /** Injection token holding the {@link MikroOrmAuthzStore} the RBAC module manages. */
 export const AUTHZ_RBAC_STORE = Symbol.for('@dudousxd/nestjs-authz-mikro-orm:store');

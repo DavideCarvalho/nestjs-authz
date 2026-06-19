@@ -1,3 +1,5 @@
+import { capability } from '@dudousxd/nestjs-diagnostics';
+
 /** Injection token holding the resolved {@link AuthzModuleOptions}. */
 export const AUTHZ_MODULE_OPTIONS = Symbol.for('@dudousxd/nestjs-authz:options');
 
@@ -57,11 +59,11 @@ export const ROLE_PROVIDER = Symbol.for('@dudousxd/nestjs-authz:role-provider');
 
 /**
  * Cross-lib injection token for the current-request context accessor, owned by
- * `@dudousxd/nestjs-context`. We do NOT import nestjs-context — instead we share
- * its well-known token by value so DI resolves the same provider when present.
+ * `@dudousxd/nestjs-context`. Resolved via the ecosystem protocol's typed
+ * injector so there is no hand-copied magic string in this file.
  *
- * `Symbol.for(key)` uses the global symbol registry, so this resolves to the
- * SAME symbol instance as nestjs-context's `tokens.ts` without any import.
- * The key MUST stay byte-identical with nestjs-context's export.
+ * `capability('context', 'accessor')` expands to
+ * `Symbol.for('@dudousxd/nestjs-context:accessor')` via the global symbol
+ * registry — identical to nestjs-context's own token without any import.
  */
-export const CONTEXT_ACCESSOR = Symbol.for('@dudousxd/nestjs-context:accessor');
+export const CONTEXT_ACCESSOR = capability('context', 'accessor');

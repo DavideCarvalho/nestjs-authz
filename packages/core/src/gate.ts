@@ -1,3 +1,4 @@
+import { InjectCapability } from '@dudousxd/nestjs-diagnostics/nestjs';
 import { ForbiddenException, Inject, Injectable, Optional, type Type } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
@@ -144,8 +145,7 @@ export class Gate {
     @Optional()
     @Inject(AUTHZ_MODULE_OPTIONS)
     options: AuthzModuleOptions | undefined,
-    @Optional()
-    @Inject(CONTEXT_ACCESSOR)
+    @InjectCapability('context', 'accessor')
     private readonly context?: ContextAccessor,
     @Optional()
     private readonly moduleRef?: ModuleRef,

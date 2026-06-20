@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.6.3
+
+### Patch Changes
+
+- [`c4a1fe8`](https://github.com/DavideCarvalho/nestjs-authz/commit/c4a1fe876f6539446a1dec3bc241164058045bcb) - Derive authz's own DI tokens (`AUTHZ_MODULE_OPTIONS`, `RESOURCE_RESOLVER`, `RESOURCE_HYDRATOR`, `PERMISSION_PROVIDER`, `ROLE_PROVIDER`) from the `capability()` factory instead of hand-rolled `Symbol.for` strings, and add a conformance test (`assertCapabilityNaming`) that locks their canonical naming. Resolves to byte-identical symbols — fully non-breaking.
+
 ## 0.6.2
 
 ### Patch Changes

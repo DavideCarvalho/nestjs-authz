@@ -1,10 +1,10 @@
 import { capability } from '@dudousxd/nestjs-diagnostics';
 
 /** Injection token holding the resolved {@link AuthzModuleOptions}. */
-export const AUTHZ_MODULE_OPTIONS = Symbol.for('@dudousxd/nestjs-authz:options');
+export const AUTHZ_MODULE_OPTIONS = capability('authz', 'options');
 
 /** Injection token for the optional {@link ResourceResolver} registered by the app. */
-export const RESOURCE_RESOLVER = Symbol.for('@dudousxd/nestjs-authz:resource-resolver');
+export const RESOURCE_RESOLVER = capability('authz', 'resource-resolver');
 
 /**
  * Injection token holding the optional resource-loader map consulted by the opt-in
@@ -20,7 +20,7 @@ export const RESOURCE_RESOLVER = Symbol.for('@dudousxd/nestjs-authz:resource-res
  * same key resolves to the SAME symbol instance. Consulted with `@Optional()` — absent
  * or empty, the endpoint behaves exactly as before (class-level / ad-hoc only).
  */
-export const RESOURCE_HYDRATOR = Symbol.for('@dudousxd/nestjs-authz:resource-hydrator');
+export const RESOURCE_HYDRATOR = capability('authz', 'resource-hydrator');
 
 /** Metadata key for `@Policy(Resource)` — stores the resource class on the policy. */
 export const POLICY_RESOURCE_METADATA = 'nestjs-authz:policy-resource';
@@ -42,7 +42,7 @@ export const ROLES_METADATA = 'nestjs-authz:roles';
  * The token is consulted with `@Optional()` — when absent, the Gate behaves exactly
  * as before (backward-compatible: unknown abilities still throw).
  */
-export const PERMISSION_PROVIDER = Symbol.for('@dudousxd/nestjs-authz:permission-provider');
+export const PERMISSION_PROVIDER = capability('authz', 'permission-provider');
 
 /**
  * Cross-lib injection token for an optional {@link RoleProvider} — the seam an RBAC
@@ -55,7 +55,7 @@ export const PERMISSION_PROVIDER = Symbol.for('@dudousxd/nestjs-authz:permission
  * `@Optional()`: when absent, only the default {@link RoleResolver} (roles read off
  * the user object) supplies roles. When BOTH yield roles, the Gate unions them.
  */
-export const ROLE_PROVIDER = Symbol.for('@dudousxd/nestjs-authz:role-provider');
+export const ROLE_PROVIDER = capability('authz', 'role-provider');
 
 /**
  * Cross-lib injection token for the current-request context accessor, owned by

@@ -13,8 +13,15 @@ function toEm(ormOrEm: MikroORM | EntityManager): EntityManager {
   return isOrm(ormOrEm) ? (ormOrEm.em as unknown as EntityManager) : ormOrEm;
 }
 
+/**
+ * A {@link MikroORM} instance exposes its {@link EntityManager} as a (non-null) `em`
+ * property; an EntityManager does not expose an `em`. That distinction is stable across
+ * MikroORM 6 and 7 — v7 removed `MikroORM.getSchemaGenerator()`, so we can no longer probe
+ * for it (the EM-bound generator is read via {@link generatorFor} instead).
+ */
 function isOrm(value: MikroORM | EntityManager): value is MikroORM {
-  return 'em' in (value as object) && typeof (value as MikroORM).getSchemaGenerator === 'function';
+  const candidate = value as { em?: unknown };
+  return candidate.em != null && typeof candidate.em === 'object';
 }
 
 /** The platform's schema generator for a given EM (driver + EM bound). */

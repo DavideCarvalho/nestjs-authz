@@ -7,6 +7,11 @@ roles, permissions, and a Gate seam, with **zero connection ownership** (your ap
 This is the MikroORM sibling of `@dudousxd/nestjs-authz-typeorm`: identical store surface
 and `AuthzRbacModule`, backed by MikroORM entities.
 
+Works with **MikroORM 6 and 7** (peer `@mikro-orm/core` `^6 || ^7`). The entities are
+defined with `EntitySchema` — the one definition style that lives entirely in
+`@mikro-orm/core` across both majors (v7 moved the `@Entity/@Property/...` decorators into a
+separate `@mikro-orm/decorators` package), so no extra peer is required.
+
 ## Install
 
 ```bash
@@ -32,9 +37,9 @@ await MikroORM.init({ entities: [...AUTHZ_ENTITIES /* , your entities */] });
 ```
 
 > BYO table names: MikroORM resolves table names from entity metadata at discovery time,
-> so override them by re-decorating these entities with your own `@Entity({ tableName })`;
-> the store + schema helpers operate purely through the `EntityManager` and never assume a
-> literal name.
+> so override them by re-declaring these entities with your own `EntitySchema({ tableName })`
+> (the `RoleEntitySchema` … `UserRoleEntitySchema` exports are the defaults); the store +
+> schema helpers operate purely through the `EntityManager` and never assume a literal name.
 
 ## Usage
 

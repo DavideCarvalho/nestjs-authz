@@ -2,9 +2,13 @@ export {
   AUTHZ_ENTITIES,
   DEFAULT_TABLE_NAMES,
   PermissionEntity,
+  PermissionEntitySchema,
   RoleEntity,
+  RoleEntitySchema,
   RolePermissionEntity,
+  RolePermissionEntitySchema,
   UserRoleEntity,
+  UserRoleEntitySchema,
 } from './entities.js';
 export { authzSchemaSql, ensureAuthzSchema } from './schema.js';
 export { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';

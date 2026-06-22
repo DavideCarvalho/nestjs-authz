@@ -1,0 +1,27 @@
+{
+  "name": "@dudousxd/nestjs-authz-mikro-orm-v7-integration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Integration suite pinning MikroORM 7 to verify @dudousxd/nestjs-authz-mikro-orm runs on v7 (peer ^6 || ^7).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@dudousxd/nestjs-authz": "workspace:^",
+    "@mikro-orm/core": "7.1.4",
+    "@mikro-orm/sqlite": "7.1.4",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "unplugin-swc": "^1.5.9",
+    "vitest": "^3.0.0"
+  }
+}

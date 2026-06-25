@@ -1,0 +1,100 @@
+# Domain map for nestjs-authz (autonomous pass — no maintainer interview)
+# ONE domain map for the whole monorepo. Skills target the PRIMARY client-facing
+# package only: @dudousxd/nestjs-authz (packages/core).
+library: "@dudousxd/nestjs-authz"
+version: "0.6.3"
+tagline: >
+  NestJS authorization in the Laravel Gate/Policy idiom. Authorization, NOT
+  authentication. Core has zero database dependencies; persisted RBAC ships as
+  separate opt-in ORM adapters.
+
+packages:
+  primary:
+    - name: "@dudousxd/nestjs-authz"
+      dir: packages/core
+      version: 0.6.3
+      role: >
+        The main NestJS module. AuthzModule.forRoot/forRootAsync, @Policy classes,
+        @Can / @Roles guards (auto-registered as APP_GUARD), the Gate service,
+        ResourceResolver seam, query scopes, and the RBAC provider seams.
+  secondary_uncovered:
+    - "@dudousxd/nestjs-authz-typeorm (packages/typeorm) — TypeORM RBAC persistence + applyScope"
+    - "@dudousxd/nestjs-authz-prisma (packages/prisma) — Prisma RBAC persistence"
+    - "@dudousxd/nestjs-authz-mikro-orm (packages/mikro-orm) — MikroORM RBAC persistence"
+    - "@dudousxd/nestjs-authz-client (packages/client) — framework-neutral in-memory can() store"
+    - "@dudousxd/nestjs-authz-codegen (packages/codegen) — nestjs-codegen extension emitting typed can()"
+    - "@dudousxd/nestjs-authz-react (packages/react) — React provider/useCan/<Can>"
+    - "@dudousxd/nestjs-authz-inertia (packages/inertia) — share abilities as Inertia props"
+    - "@dudousxd/nestjs-authz-testing (packages/testing) — expectCan/expectCannot fixtures"
+
+core_concepts:
+  - id: module-setup
+    summary: >
+      AuthzModule.forRoot({...}) / forRootAsync — global module. Registers Gate,
+      CanGuard + RolesGuard as APP_GUARD, PolicyRegistry, a default
+      IdParamResourceResolver, and an opt-in POST /authz/can endpoint.
+    options: [policies, superAdmin, after, resolveUser, resolveRoles, resourceResolver, idParam, canEndpoint, resourceLoaders]
+    critical_gotcha: >
+      On the CONTEXT path (no forUser), superAdmin/after/policy callbacks receive
+      the raw UserRef ({type,id}) from nestjs-context, NOT the hydrated user entity.
+      Property checks like `u.isAdmin` or `post.authorId === user.id` against real
+      columns require AuthzModuleOptions.resolveUser to hydrate the entity first.
+  - id: policies
+    summary: >
+      @Policy(Resource) class — methods are abilities dispatched by name. Optional
+      before(user, ability) short-circuit hook (true=allow, false=deny,
+      undefined=fall through). Class-level abilities (e.g. create) omit the resource.
+      Methods return boolean OR { allowed, message } (PolicyResponse) for a deny message.
+    source: packages/core/src/decorator/policy.decorator.ts, packages/core/src/gate.ts
+  - id: enforcement
+    summary: >
+      Declarative @Can('update', Post) + @Can('create', Post, { classLevel: true })
+      + @Can('access-admin') ad-hoc. @Roles('admin','teacher') coarse check.
+      Programmatic Gate: allows/denies/authorize/allowsMany, forUser(user) BoundGate,
+      define(ability, fn) ad-hoc gates, hasRole/hasAnyRole.
+    source: packages/core/src/guard/can.guard.ts, packages/core/src/guard/roles.guard.ts, packages/core/src/gate.ts
+  - id: resource-resolution
+    summary: >
+      @Can('update', Post) needs an instance. Default IdParamResourceResolver reads
+      the route :id param into a {id} shim of the class. Real entities: implement
+      ResourceResolver and bind RESOURCE_RESOLVER (or pass resourceResolver option).
+      A resolver returning undefined = not found = deny.
+    source: packages/core/src/resource-resolver.ts
+  - id: query-scopes
+    summary: >
+      gate.scope(Entity, ability='viewAny') returns an ORM-neutral ScopeConstraint
+      AST (scopeAll/scopeNone or where/eq/and/or nodes) — the accessibleBy /
+      policy_scope concept. A @Policy `scope(user, Entity)` method builds it; adapters
+      (typeorm applyScope) compile it to a parameterized WHERE.
+    source: packages/core/src/scope.ts
+  - id: rbac-seams
+    summary: >
+      PERMISSION_PROVIDER / ROLE_PROVIDER tokens (capability symbols) are optional
+      grant-only seams the ORM adapters register. PermissionProvider.hasPermission +
+      optional getPermissions enable Laravel/spatie wildcard grants (posts.* satisfies
+      posts.update). RoleProvider.getRoles unions with the user-object RoleResolver.
+    source: packages/core/src/permission-provider.ts, packages/core/src/role-provider.ts, packages/core/src/tokens.ts
+
+resolution_order:  # Gate.resolveBase — grant-or-fall-through, default-deny
+  - "1. superAdmin hook: true=allow, false=deny, nullish=fall through"
+  - "2. PERMISSION_PROVIDER grant (authenticated only): true=allow, else fall through (grant-only, never denies)"
+  - "3. @Policy method (gated on method existing): before hook may short-circuit; anonymous=deny; method result"
+  - "4. ad-hoc gate (define): anonymous=deny; gate result"
+  - "5. unresolved ability throws AbilityNotResolvedException; ambiguous class-level throws AmbiguousAbilityException"
+  - "after hook may OVERRIDE only when the base produced no explicit verdict (undefined); else observe-only"
+  - "finalize: undefined (no opinion) default-denies"
+
+context_integration:
+  optional_peer: "@dudousxd/nestjs-context"
+  token: "CONTEXT_ACCESSOR = capability('context','accessor') = Symbol.for('@dudousxd/nestjs-context:accessor')"
+  behavior: >
+    Consumed structurally via @InjectCapability('context','accessor'). When present the
+    Gate reads the current UserRef for free. When absent, pass the user via gate.forUser(user).
+
+gaps:  # what a maintainer interview would have answered — recorded honestly
+  - "No docs/ dir in-repo; canonical docs live on the external Aviary site (davidecarvalho.github.io/aviary/docs/authz) which was not fetched. Skills are grounded in repo source + README + DESIGN.md only."
+  - "Could not run `gh search issues` for real-world failure modes (no GitHub access assumed). AI-agent failure modes were INFERRED from source comments (esp. the resolveUser/UserRef gotcha, which is heavily warned about in types.ts) rather than confirmed against issue history."
+  - "Maintainer priority ordering across the 8 packages is unknown. Picked core as the single primary client-facing package; the 3 parallel ORM adapters (typeorm/prisma/mikro-orm) were left uncovered to avoid an arbitrary ORM choice — a maintainer might want one canonical adapter skill."
+  - "Production defaults unknown: whether teams typically enable canEndpoint, use resourceLoaders, or rely on Inertia/React hydration paths in practice. Skills present these as opt-in per the source."
+  - "Version this library considers stable for skills (0.6.3 alpha line) and the SemVer compatibility range were not confirmed with a maintainer; compatibility is set conservatively to the current core version."
+  - "VERSION const in src/index.ts is '0.0.0' (a known build-time-substituted placeholder per the biome-gate memory) — package.json version 0.6.3 is the source of truth used here."

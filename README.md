@@ -86,7 +86,7 @@ await this.gate.allows('access-admin');
 
 ## Current user
 
-The gate resolves the current user via `@Optional() @Inject('CONTEXT_ACCESSOR')`, matching the well-known token exported by `@dudousxd/nestjs-context`. The accessor is consumed **structurally** (`userRef(): { type, id } | undefined`) — nestjs-context is never imported. If no accessor is present and no user is passed, checks treat the request as unauthenticated and deny.
+The gate resolves the current user via `@Optional() @Inject(CONTEXT_ACCESSOR)`, matching the well-known token exported by `@dudousxd/nestjs-context`. The accessor is consumed **structurally** (`userRef(): { type, id } | undefined`) — nestjs-context is never imported. If no accessor is present and no user is passed, checks treat the request as unauthenticated and deny.
 
 ## Resource resolution
 

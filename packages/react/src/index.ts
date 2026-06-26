@@ -1,4 +1,4 @@
-export const VERSION = '0.0.0';
+export const VERSION = '0.1.1';
 
 // Re-export the framework-neutral store for convenience.
 export {

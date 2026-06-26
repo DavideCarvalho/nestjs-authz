@@ -1,0 +1,35 @@
+# Skill tree for nestjs-authz — flat, all under the primary package.
+library: "@dudousxd/nestjs-authz"
+structure: flat
+router: false   # <=5 peer skills, non-hierarchical
+
+skills:
+  - name: authz-setup
+    package: "@dudousxd/nestjs-authz"
+    path: packages/core/skills/authz-setup/SKILL.md
+    type: core
+    summary: Install + AuthzModule.forRoot/forRootAsync wiring, nestjs-context peer, the resolveUser/UserRef gotcha.
+
+  - name: authz-policies
+    package: "@dudousxd/nestjs-authz"
+    path: packages/core/skills/authz-policies/SKILL.md
+    type: core
+    summary: "@Policy classes, ability methods, before hook, deny messages, superAdmin/after hooks."
+
+  - name: authz-enforcement
+    package: "@dudousxd/nestjs-authz"
+    path: packages/core/skills/authz-enforcement/SKILL.md
+    type: core
+    summary: "@Can / @Roles guards, ResourceResolver seam, programmatic Gate API."
+
+  - name: authz-query-scopes
+    package: "@dudousxd/nestjs-authz"
+    path: packages/core/skills/authz-query-scopes/SKILL.md
+    type: core
+    summary: gate.scope + ScopeConstraint AST builders, policy scope method, adapter applyScope.
+
+  - name: authz-rbac-seams
+    package: "@dudousxd/nestjs-authz"
+    path: packages/core/skills/authz-rbac-seams/SKILL.md
+    type: core
+    summary: PERMISSION_PROVIDER / ROLE_PROVIDER seams, wildcard permissions, persisted AuthzRbacModule wiring.

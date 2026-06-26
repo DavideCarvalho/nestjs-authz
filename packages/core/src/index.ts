@@ -1,4 +1,4 @@
-export const VERSION = '0.0.0';
+export const VERSION = '0.6.3';
 
 export { Gate, BoundGate } from './gate.js';
 export type { BatchAbility, BatchResult } from './gate.js';

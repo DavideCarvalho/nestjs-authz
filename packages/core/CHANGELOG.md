@@ -1,5 +1,15 @@
 # @dudousxd/nestjs-authz
 
+## 0.6.4
+
+### Patch Changes
+
+- [#15](https://github.com/DavideCarvalho/nestjs-authz/pull/15) [`10fb1d1`](https://github.com/DavideCarvalho/nestjs-authz/commit/10fb1d154f4dc7a8294b366f213ec38c26a9c678) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Ship TanStack Intent agent skills (SKILL.md) inside the package.
+
+- [#15](https://github.com/DavideCarvalho/nestjs-authz/pull/15) [`7294ff5`](https://github.com/DavideCarvalho/nestjs-authz/commit/7294ff5c01454d9fea6d42a6c3f80eff2f00dc48) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix the exported `VERSION` const shipping as `'0.0.0'`.
+
+  The build is plain `tsc` with no version injection, and `changeset version` only bumps `package.json` — leaving the `export const VERSION` in `src/index.ts` stale, so the published dist reported `'0.0.0'`. The const is now corrected to match each package's `package.json`, and a new `scripts/sync-version.mjs` (chained into the `version-packages` script) re-syncs it on every release bump to prevent future drift. Run with `--check` to fail a build on mismatch.
+
 ## 0.6.3
 
 ### Patch Changes

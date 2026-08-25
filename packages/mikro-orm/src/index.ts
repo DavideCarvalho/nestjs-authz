@@ -1,5 +1,7 @@
 export {
   AUTHZ_ENTITIES,
+  AUTHZ_ENTITY_CLASSES,
+  createAuthzEntitySchemas,
   DEFAULT_TABLE_NAMES,
   PermissionEntity,
   PermissionEntitySchema,
@@ -10,6 +12,15 @@ export {
   UserRoleEntity,
   UserRoleEntitySchema,
 } from './entities.js';
+export type { AuthzEntitySchemas, AuthzTableNames } from './entities.js';
+// VALUE exports on purpose: these classes are the DI tokens `MikroOrmModule.forFeature()`
+// registers, so `export type` would compile green and be `undefined` at runtime.
+export {
+  AuthzPermissionRepository,
+  AuthzRolePermissionRepository,
+  AuthzRoleRepository,
+  AuthzUserRoleRepository,
+} from './repositories.js';
 export { authzSchemaSql, ensureAuthzSchema } from './schema.js';
 export { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';
 export type { UserAuthz } from './mikro-orm-authz.store.js';

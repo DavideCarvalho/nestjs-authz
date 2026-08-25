@@ -1,8 +1,9 @@
 import 'reflect-metadata';
 import { MikroORM } from '@mikro-orm/better-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AUTHZ_ENTITIES } from '../src/entities.js';
+import { AUTHZ_ENTITIES, RoleEntity } from '../src/entities.js';
 import { MikroOrmAuthzStore } from '../src/mikro-orm-authz.store.js';
+import { AuthzRoleRepository } from '../src/repositories.js';
 import { authzSchemaSql, ensureAuthzSchema } from '../src/schema.js';
 
 async function freshOrm(): Promise<MikroORM> {
@@ -22,6 +23,10 @@ describe('ensureAuthzSchema (integration, sqlite)', () => {
 
   afterEach(async () => {
     await orm.close(true);
+  });
+
+  it('registering AUTHZ_ENTITIES binds the custom repositories', () => {
+    expect(orm.em.getRepository(RoleEntity)).toBeInstanceOf(AuthzRoleRepository);
   });
 
   it('produces non-destructive SQL and creates all four tables, idempotently', async () => {

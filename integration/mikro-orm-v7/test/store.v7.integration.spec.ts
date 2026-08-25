@@ -9,8 +9,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // only way decorator-free EntitySchema metadata is registered with the v7 runtime. The
 // built package ships v6 as a devDependency, so a symlinked import would silently load v6.
 import { AuthzRbacModule } from '../../../packages/mikro-orm/src/authz-rbac.module.js';
-import { AUTHZ_ENTITIES } from '../../../packages/mikro-orm/src/entities.js';
+import { AUTHZ_ENTITIES, RoleEntity } from '../../../packages/mikro-orm/src/entities.js';
 import { MikroOrmAuthzStore } from '../../../packages/mikro-orm/src/mikro-orm-authz.store.js';
+import { AuthzRoleRepository } from '../../../packages/mikro-orm/src/repositories.js';
 import { authzSchemaSql, ensureAuthzSchema } from '../../../packages/mikro-orm/src/schema.js';
 
 const coreVersion: string = createRequire(import.meta.url)('@mikro-orm/core/package.json').version;
@@ -40,6 +41,12 @@ describe(`MikroOrmAuthzStore on MikroORM ${coreVersion} (integration, sqlite)`, 
   it('runs against a MikroORM 7 core', () => {
     // Guard: if this ever resolves to v6 the whole suite is meaningless.
     expect(coreVersion.startsWith('7.')).toBe(true);
+  });
+
+  it('em.getRepository(RoleEntity) resolves the bound AuthzRoleRepository on v7', () => {
+    // `EntityRepository` and the `repository:` EntitySchema option both live in
+    // `@mikro-orm/core` on v6 and v7 — this is the v7 half of that proof.
+    expect(orm.em.getRepository(RoleEntity)).toBeInstanceOf(AuthzRoleRepository);
   });
 
   it('ensureAuthzSchema creates all four authz tables non-destructively, idempotently', async () => {

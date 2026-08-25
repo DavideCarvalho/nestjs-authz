@@ -1,12 +1,31 @@
 import type { EntityManager, MikroORM } from '@mikro-orm/core';
+import {
+  DEFAULT_TABLE_NAMES,
+  PermissionEntity,
+  RoleEntity,
+  RolePermissionEntity,
+  UserRoleEntity,
+} from './entities.js';
 
-/** The four authz table names — used to filter the schema diff down to our tables. */
-const AUTHZ_TABLES = [
-  'authz_roles',
-  'authz_permissions',
-  'authz_role_permission',
-  'authz_user_role',
+/** Entity class → the table name to fall back to when the entity is not registered. */
+const AUTHZ_ENTITY_TABLE_DEFAULTS: ReadonlyArray<readonly [{ name: string }, string]> = [
+  [RoleEntity, DEFAULT_TABLE_NAMES.roles],
+  [PermissionEntity, DEFAULT_TABLE_NAMES.permissions],
+  [RolePermissionEntity, DEFAULT_TABLE_NAMES.rolePermission],
+  [UserRoleEntity, DEFAULT_TABLE_NAMES.userRole],
 ];
+
+/**
+ * The four authz table names — used to filter the schema diff down to our tables. Read off
+ * the live metadata so a host that relocated the tables (see `createAuthzEntitySchemas`)
+ * still gets them created.
+ */
+function authzTables(em: EntityManager): string[] {
+  const metadata = em.getMetadata();
+  return AUTHZ_ENTITY_TABLE_DEFAULTS.map(
+    ([entity, fallback]) => metadata.find(entity.name)?.tableName ?? fallback,
+  );
+}
 
 /** Resolve an {@link EntityManager} from a {@link MikroORM} or an EM. */
 function toEm(ormOrEm: MikroORM | EntityManager): EntityManager {
@@ -31,11 +50,12 @@ function generatorFor(em: EntityManager) {
 
 /** Statements (split, trimmed) from the non-destructive schema diff that touch our tables. */
 async function authzStatements(em: EntityManager): Promise<string[]> {
+  const tables = authzTables(em);
   const sql = await generatorFor(em).getUpdateSchemaSQL({ safe: true, wrap: false });
   return sql
     .split(';')
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && AUTHZ_TABLES.some((t) => new RegExp(`\\b${t}\\b`, 'i').test(s)));
+    .filter((s) => s.length > 0 && tables.some((t) => new RegExp(`\\b${t}\\b`, 'i').test(s)));
 }
 
 /**

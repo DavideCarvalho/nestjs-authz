@@ -36,10 +36,56 @@ import { AUTHZ_ENTITIES } from '@dudousxd/nestjs-authz-mikro-orm';
 await MikroORM.init({ entities: [...AUTHZ_ENTITIES /* , your entities */] });
 ```
 
-> BYO table names: MikroORM resolves table names from entity metadata at discovery time,
-> so override them by re-declaring these entities with your own `EntitySchema({ tableName })`
-> (the `RoleEntitySchema` … `UserRoleEntitySchema` exports are the defaults); the store +
-> schema helpers operate purely through the `EntityManager` and never assume a literal name.
+### BYO table names
+
+MikroORM resolves table names from entity metadata at discovery time. Build your own set of
+schemas with `createAuthzEntitySchemas` and register those instead:
+
+```ts
+import { createAuthzEntitySchemas } from '@dudousxd/nestjs-authz-mikro-orm';
+
+const authz = createAuthzEntitySchemas({ roles: 'app_roles', userRole: 'app_user_role' });
+await MikroORM.init({ entities: [...authz.all /* , your entities */] });
+```
+
+Any subset of `roles` / `permissions` / `rolePermission` / `userRole` may be overridden; the
+rest keep their defaults. The factory carries the custom repository binding and derives the
+index names from your table names, so nothing is lost by relocating the tables — hand-writing
+`new EntitySchema({ class: RoleEntity, tableName })` instead silently drops both. The store and
+the schema helpers read the physical names back off the live metadata and never assume a
+literal name.
+
+## Repositories
+
+Each entity is bound to a typed repository, so app code injects it by type rather than passing
+the entity class to every `EntityManager` call:
+
+```ts
+import { AUTHZ_ENTITY_CLASSES, AuthzRoleRepository } from '@dudousxd/nestjs-authz-mikro-orm';
+import { MikroOrmModule } from '@mikro-orm/nestjs';
+
+@Module({
+  // forFeature matches on the entity CLASS — pass these, not the schemas.
+  imports: [MikroOrmModule.forFeature([...AUTHZ_ENTITY_CLASSES])],
+})
+export class RolesModule {}
+
+@Injectable()
+export class RolesService {
+  constructor(private readonly roles: AuthzRoleRepository) {}
+
+  findByName(name: string) {
+    return this.roles.findOne({ name });
+  }
+}
+```
+
+Without `@mikro-orm/nestjs`, `em.getRepository(RoleEntity)` returns the same instance and is
+typed as `AuthzRoleRepository`. The four classes are `AuthzRoleRepository`,
+`AuthzPermissionRepository`, `AuthzRolePermissionRepository` and `AuthzUserRoleRepository`;
+their bodies are empty — this package ships no query surface beyond `MikroOrmAuthzStore`.
+
+`MikroOrmAuthzStore` is unaffected — it still takes an `EntityManager` and owns no connection.
 
 ## Usage
 

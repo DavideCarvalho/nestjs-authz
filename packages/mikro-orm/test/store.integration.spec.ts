@@ -4,8 +4,9 @@ import { MikroORM } from '@mikro-orm/better-sqlite';
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
-import { AUTHZ_ENTITIES } from '../src/entities.js';
+import { AUTHZ_ENTITIES, RoleEntity } from '../src/entities.js';
 import { MikroOrmAuthzStore } from '../src/mikro-orm-authz.store.js';
+import { AuthzRoleRepository } from '../src/repositories.js';
 
 async function freshOrm(): Promise<MikroORM> {
   return MikroORM.init({
@@ -27,6 +28,13 @@ describe('MikroOrmAuthzStore (integration, sqlite)', () => {
 
   afterEach(async () => {
     await orm.close(true);
+  });
+
+  it('em.getRepository(RoleEntity) resolves the bound AuthzRoleRepository', () => {
+    // The `repository: () => AuthzRoleRepository` binding on the EntitySchema is what lets a
+    // host inject the repository by type instead of passing the entity to every em call.
+    const repo = orm.em.getRepository(RoleEntity);
+    expect(repo).toBeInstanceOf(AuthzRoleRepository);
   });
 
   it('assign role → user gains the role’s permissions', async () => {

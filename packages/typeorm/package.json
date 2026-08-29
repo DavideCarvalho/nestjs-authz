@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-typeorm",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "TypeORM RBAC persistence for @dudousxd/nestjs-authz — roles, permissions, and a Gate seam (zero connection ownership).",
   "license": "MIT",
   "repository": {

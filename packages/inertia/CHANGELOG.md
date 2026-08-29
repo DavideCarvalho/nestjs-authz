@@ -1,5 +1,16 @@
 # @dudousxd/nestjs-authz-inertia
 
+## 0.1.3
+
+### Patch Changes
+
+- [`f079152`](https://github.com/DavideCarvalho/nestjs-authz/commit/f079152627ed223e87fa5b701d0c6917aaa34d9d) - Support NestJS 12.
+
+  The `@nestjs/common` / `@nestjs/core` peer ranges are already `>=10.0.0`, so they
+  admit 12 unchanged. The dev/test matrix now runs on `@nestjs/*@12.0.1` (and the
+  MikroORM 7 integration app with it), so v12 is covered by CI rather than merely
+  allowed by the range. No source changes were needed.
+
 ## 0.1.2
 
 ### Patch Changes

@@ -15,7 +15,7 @@ importers:
         specifier: ^0.7.0
         version: 0.7.0(encoding@0.1.13)
       '@changesets/cli':
-        specifier: ^2.27.0
+        specifier: ^2.31.0
         version: 2.31.0(@types/node@20.19.43)
       '@swc/core':
         specifier: ^1.15.40

@@ -274,8 +274,8 @@ importers:
         specifier: 10.4.1
         version: 10.4.1
       '@testing-library/react':
-        specifier: 16.3.2
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: 16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.1)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@types/react':
         specifier: 18.3.31
         version: 18.3.31
@@ -353,7 +353,7 @@ importers:
         version: 5.1.7
       typeorm:
         specifier: 0.3.30
-        version: 0.3.30(better-sqlite3@11.10.0)(mysql2@3.22.5(@types/node@20.19.43))(pg@8.21.0)(sqlite3@5.1.7)
+        version: 0.3.30(better-sqlite3@13.0.3)(mysql2@3.22.5(@types/node@20.19.43))(pg@8.21.0)(sqlite3@5.1.7)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -1217,8 +1217,8 @@ packages:
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
 
-  '@testing-library/react@16.3.2':
-    resolution: {integrity: sha512-XU5/SytQM+ykqMnAnvB2umaJNIOsLF3PVv//1Ew4CTcpz0/BRyy/af40qqrt7SjKpDdT1saBMc42CUok5gaw+g==}
+  '@testing-library/react@16.3.3':
+    resolution: {integrity: sha512-Uo193NgQbPMz6lrrhtRQQFcMC6Re/ELLFbbuVL30WDlZxlpZf9/lMHTAVxPRLw1q1iu9OJmR1c2BLiENRstdBg==}
     engines: {node: '>=18'}
     peerDependencies:
       '@testing-library/dom': ^10.0.0
@@ -4520,7 +4520,7 @@ snapshots:
       picocolors: 1.1.1
       pretty-format: 27.5.1
 
-  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@testing-library/react@16.3.3(@testing-library/dom@10.4.1)(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@testing-library/dom': 10.4.1
@@ -7011,7 +7011,7 @@ snapshots:
 
   typedarray@0.0.6: {}
 
-  typeorm@0.3.30(better-sqlite3@11.10.0)(mysql2@3.22.5(@types/node@20.19.43))(pg@8.21.0)(sqlite3@5.1.7):
+  typeorm@0.3.30(better-sqlite3@13.0.3)(mysql2@3.22.5(@types/node@20.19.43))(pg@8.21.0)(sqlite3@5.1.7):
     dependencies:
       '@sqltools/formatter': 1.2.5
       ansis: 4.3.1
@@ -7029,7 +7029,7 @@ snapshots:
       uuid: 11.1.1
       yargs: 17.7.2
     optionalDependencies:
-      better-sqlite3: 11.10.0
+      better-sqlite3: 13.0.3
       mysql2: 3.22.5(@types/node@20.19.43)
       pg: 8.21.0
       sqlite3: 5.1.7

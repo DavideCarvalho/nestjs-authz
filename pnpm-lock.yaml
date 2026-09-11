@@ -30,7 +30,7 @@ importers:
         specifier: ^1.5.9
         version: 1.5.9(@swc/core@1.15.41)(rollup@4.62.0)
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   integration/mikro-orm-v7:
@@ -67,7 +67,7 @@ importers:
         specifier: ^1.5.9
         version: 1.5.9(@swc/core@1.15.41)(rollup@4.62.0)
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/client:
@@ -76,7 +76,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/codegen:
@@ -97,7 +97,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/core:
@@ -146,7 +146,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/inertia:
@@ -183,7 +183,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/mikro-orm:
@@ -222,7 +222,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/prisma:
@@ -261,7 +261,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/react:
@@ -292,7 +292,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/testing:
@@ -310,7 +310,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
   packages/typeorm:
@@ -358,7 +358,7 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.6
         version: 3.2.6(@types/node@20.19.43)(jsdom@25.0.1)(yaml@2.9.0)
 
 packages:

@@ -39,7 +39,7 @@
   "devDependencies": {
     "@dudousxd/nestjs-authz": "workspace:^",
     "@dudousxd/nestjs-authz-client": "workspace:^",
-    "@dudousxd/nestjs-codegen": "0.4.0",
+    "@dudousxd/nestjs-codegen": "0.25.1",
     "ts-morph": "28.0.0",
     "typescript": "5.9.3",
     "vitest": "3.2.6"

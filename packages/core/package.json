@@ -38,12 +38,7 @@
       "default": "./dist/store-kit.js"
     }
   },
-  "files": [
-    "dist/",
-    "README.md",
-    "CHANGELOG.md",
-    "skills"
-  ],
+  "files": ["dist/", "README.md", "CHANGELOG.md", "skills"],
   "dependencies": {
     "@dudousxd/nestjs-diagnostics": "0.5.0"
   },

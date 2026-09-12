@@ -12,15 +12,7 @@
   "bugs": {
     "url": "https://github.com/DavideCarvalho/nestjs-authz/issues"
   },
-  "keywords": [
-    "nestjs",
-    "authorization",
-    "authz",
-    "inertia",
-    "inertia.js",
-    "abilities",
-    "can"
-  ],
+  "keywords": ["nestjs", "authorization", "authz", "inertia", "inertia.js", "abilities", "can"],
   "author": "Davi Carvalho <davi@goflip.ai>",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,11 +29,7 @@
       "default": "./dist/client.js"
     }
   },
-  "files": [
-    "dist/",
-    "README.md",
-    "CHANGELOG.md"
-  ],
+  "files": ["dist/", "README.md", "CHANGELOG.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",

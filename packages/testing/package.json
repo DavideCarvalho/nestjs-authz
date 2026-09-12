@@ -8,6 +8,19 @@
     "url": "git+https://github.com/DavideCarvalho/nestjs-authz.git",
     "directory": "packages/testing"
   },
+  "homepage": "https://davidecarvalho.github.io/aviary/docs/authz",
+  "bugs": {
+    "url": "https://github.com/DavideCarvalho/nestjs-authz/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "authorization",
+    "authz",
+    "testing",
+    "gate",
+    "policy",
+    "fixtures"
+  ],
   "author": "Davi Carvalho <davi@goflip.ai>",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,7 +32,11 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist/", "README.md", "CHANGELOG.md"],
+  "files": [
+    "dist/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
@@ -39,6 +56,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "keywords": ["nestjs", "authorization", "authz", "testing", "gate", "policy", "fixtures"]
+  }
 }

@@ -1,5 +1,15 @@
 # @dudousxd/nestjs-authz
 
+## 0.6.6
+
+### Patch Changes
+
+- [`94106d0`](https://github.com/DavideCarvalho/nestjs-authz/commit/94106d03fc97ffa1ed4de4e246f6a198484f07d4) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Document what keeps the exported `VERSION` const in sync
+
+  Comment-only change: notes above `export const VERSION` in `src/index.ts` that the
+  literal is rewritten from `package.json` by `scripts/sync-version.mjs`, chained into the
+  root `version-packages` script after `changeset version`. No runtime behaviour changes.
+
 ## 0.6.5
 
 ### Patch Changes

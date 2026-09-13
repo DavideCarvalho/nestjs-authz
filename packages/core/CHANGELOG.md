@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.6.7
+
+### Patch Changes
+
+- fix(deps): update dependency @dudousxd/nestjs-diagnostics to v0.7.1 ([#44](https://github.com/DavideCarvalho/nestjs-authz/issues/44))
+
 ## 0.6.6
 
 ### Patch Changes

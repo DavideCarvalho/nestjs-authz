@@ -40,7 +40,7 @@
   },
   "files": ["dist/", "README.md", "CHANGELOG.md", "skills"],
   "dependencies": {
-    "@dudousxd/nestjs-diagnostics": "0.5.0"
+    "@dudousxd/nestjs-diagnostics": "0.7.1"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

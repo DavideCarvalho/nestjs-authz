@@ -21,6 +21,7 @@ packages:
     - "@dudousxd/nestjs-authz-typeorm (packages/typeorm) — TypeORM RBAC persistence + applyScope"
     - "@dudousxd/nestjs-authz-prisma (packages/prisma) — Prisma RBAC persistence"
     - "@dudousxd/nestjs-authz-mikro-orm (packages/mikro-orm) — MikroORM RBAC persistence"
+    - "@dudousxd/nestjs-authz-drizzle (packages/drizzle) — Drizzle (Postgres) RBAC persistence + scope compiler"
     - "@dudousxd/nestjs-authz-client (packages/client) — framework-neutral in-memory can() store"
     - "@dudousxd/nestjs-authz-codegen (packages/codegen) — nestjs-codegen extension emitting typed can()"
     - "@dudousxd/nestjs-authz-react (packages/react) — React provider/useCan/<Can>"

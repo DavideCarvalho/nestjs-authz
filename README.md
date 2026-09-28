@@ -96,6 +96,34 @@ The gate resolves the current user via `@Optional() @Inject(CONTEXT_ACCESSOR)`, 
 { provide: RESOURCE_RESOLVER, useClass: MyOrmResourceResolver }
 ```
 
+## External policy engines (Cerbos, OPA, …)
+
+Register a `DecisionProvider` under `DECISION_PROVIDER` to hand decisions to an external policy
+decision point. Unlike the grant-only RBAC seam, it can **allow or deny** a resource-aware check.
+Returning `undefined` abstains. The provider can also batch `gate.allowsMany`, and it can map the
+engine's query plan onto `gate.scope()`. It runs right after the `superAdmin` hook, which now also
+receives the resource. A Cerbos adapter ships in the box as a subpath with no extra dependency;
+bring your own `@cerbos/http` or `@cerbos/grpc` client:
+
+```ts
+import { DECISION_PROVIDER } from '@dudousxd/nestjs-authz';
+import { CerbosDecisionProvider } from '@dudousxd/nestjs-authz/cerbos';
+import { HTTP } from '@cerbos/http';
+
+providers: [{
+  provide: DECISION_PROVIDER,
+  useValue: new CerbosDecisionProvider({
+    client: new HTTP(process.env.CERBOS_URL!),            // or (user) => per-tenant client | undefined
+    principal: (u) => u && { id: u.id, roles: u.roles, attr: { tenantId: u.tenantId } },
+    resource: (ability, r) => (r instanceof Post ? { kind: 'app:post', id: r.id, attr: { ownerId: r.ownerId } } : undefined),
+    scope: { resource: (entity) => (entity === Post ? { kind: 'app:post' } : undefined) },
+  }),
+}]
+```
+
+The adapter fails **closed** by default. An unreachable PDP denies, and an unsupported query plan
+scopes to no rows. Set `onFailure: 'abstain'` to fall back to your own policies instead.
+
 ## License
 
 MIT © Davi Carvalho

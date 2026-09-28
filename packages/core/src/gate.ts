@@ -2,6 +2,7 @@ import { InjectCapability } from '@dudousxd/nestjs-diagnostics/nestjs';
 import { ForbiddenException, Inject, Injectable, Optional, type Type } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
+import type { DecisionProvider, DecisionVerdict } from './decision-provider.js';
 import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js';
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
 import { PermissionCache } from './permission-cache.js';
@@ -19,6 +20,7 @@ import {
 import {
   AUTHZ_MODULE_OPTIONS,
   CONTEXT_ACCESSOR,
+  DECISION_PROVIDER,
   PERMISSION_PROVIDER,
   ROLE_PROVIDER,
 } from './tokens.js';
@@ -139,6 +141,8 @@ export class Gate {
   private permissionProviderCached: PermissionProvider | undefined;
   private roleProviderResolved = false;
   private roleProviderCached: RoleProvider | undefined;
+  private decisionProviderResolved = false;
+  private decisionProviderCached: DecisionProvider | undefined;
 
   constructor(
     private readonly policies: PolicyRegistry,
@@ -155,6 +159,9 @@ export class Gate {
     @Optional()
     @Inject(ROLE_PROVIDER)
     private readonly roleProvider?: RoleProvider,
+    @Optional()
+    @Inject(DECISION_PROVIDER)
+    private readonly decisionProvider?: DecisionProvider,
   ) {
     this.superAdmin = options?.superAdmin;
     this.after = options?.after;
@@ -216,6 +223,25 @@ export class Gate {
       this.roleProviderCached = undefined;
     }
     return this.roleProviderCached;
+  }
+
+  /**
+   * Locate the optional {@link DecisionProvider} (the external-PDP seam). Same lookup strategy as
+   * {@link resolvePermissionProvider}: injected value first, then a memoized non-strict scan.
+   */
+  private resolveDecisionProvider(): DecisionProvider | undefined {
+    if (this.decisionProvider) return this.decisionProvider;
+    if (this.decisionProviderResolved) return this.decisionProviderCached;
+    this.decisionProviderResolved = true;
+    if (!this.moduleRef) return this.decisionProviderCached;
+    try {
+      this.decisionProviderCached = this.moduleRef.get<DecisionProvider>(DECISION_PROVIDER, {
+        strict: false,
+      });
+    } catch {
+      this.decisionProviderCached = undefined;
+    }
+    return this.decisionProviderCached;
   }
 
   /**
@@ -381,11 +407,13 @@ export class Gate {
    */
   private async checkMany(user: MaybeUser, items: BatchAbility[]): Promise<BatchResult[]> {
     const cache = this.resolveRequestCache() ?? new PermissionCache();
+    const prefetched = await this.prefetchDecisions(user, items);
     const out: BatchResult[] = [];
-    for (const item of items) {
+    for (const [index, item] of items.entries()) {
       let allowed: boolean;
       try {
-        allowed = await this.check(user, item.ability, item.resource, cache);
+        allowed = (await this.decide(user, item.ability, item.resource, cache, prefetched?.[index]))
+          .allowed;
       } catch {
         // Unresolved/ambiguous ability → deny just this item (don't abort the batch).
         allowed = false;
@@ -397,6 +425,36 @@ export class Gate {
       );
     }
     return out;
+  }
+
+  /**
+   * One {@link DecisionProvider.decideMany} round-trip for a whole batch, when the provider
+   * supports it. Returns `undefined` (→ per-item `decide`) otherwise. A batch-call failure makes
+   * every item fall back to its own `decide` call rather than failing the batch.
+   */
+  private async prefetchDecisions(
+    maybeUser: MaybeUser,
+    items: BatchAbility[],
+  ): Promise<Array<{ verdict: DecisionVerdict }> | undefined> {
+    const provider = this.resolveDecisionProvider();
+    if (!provider || typeof provider.decideMany !== 'function' || items.length === 0) {
+      return undefined;
+    }
+    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
+    try {
+      const verdicts = await provider.decideMany(
+        user,
+        items.map((i) =>
+          i.resource === undefined
+            ? { ability: i.ability }
+            : { ability: i.ability, resource: i.resource },
+        ),
+      );
+      if (!Array.isArray(verdicts) || verdicts.length !== items.length) return undefined;
+      return verdicts.map((verdict) => ({ verdict }));
+    } catch {
+      return undefined;
+    }
   }
 
   /** @internal — used by {@link BoundGate.authorize} to surface the deny reason/message. */
@@ -427,6 +485,7 @@ export class Gate {
    * grant order so scoping stays consistent with single-resource decisions:
    *
    * 1. super-admin hook grants → `allow-all`;
+   *    1b. decision provider `planScope` → its constraint (unless it abstains);
    * 2. (authenticated) permission-provider grant for `ability` → `allow-all`;
    * 3. the policy's `scope` (or `viewAny`-style) method → its constraint;
    * 4. otherwise (anonymous, no policy, no scope method) → `deny-all`.
@@ -444,8 +503,16 @@ export class Gate {
 
     // 1. Global super-admin hook → allow-all (a `false` does not deny here, it
     //    just falls through, mirroring resolveBase's grant-or-fall-through).
-    const sa = normalizeResult(await this.superAdmin?.(user, ability));
+    const sa = normalizeResult(await this.superAdmin?.(user, ability, entity));
     if (sa.allowed === true) return scopeAll;
+
+    // 1b. External decision point's query plan (e.g. Cerbos PlanResources) → used as-is;
+    //     `undefined` abstains.
+    const planner = this.resolveDecisionProvider();
+    if (planner && typeof planner.planScope === 'function') {
+      const planned = await planner.planScope(user, entity, ability);
+      if (planned !== undefined) return planned;
+    }
 
     // 2. Permission-provider grant for the scope ability → allow-all.
     if (
@@ -571,8 +638,9 @@ export class Gate {
     ability: string,
     resource?: Resource,
     cache?: PermissionCache,
+    prefetched?: { verdict: DecisionVerdict },
   ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
-    const decision = await this.resolve(maybeUser, ability, resource, cache);
+    const decision = await this.resolve(maybeUser, ability, resource, cache, prefetched);
     // Emit the decision for observers (e.g. the generic @dudousxd/nestjs-diagnostics-telescope watcher).
     // Loosely coupled via a diagnostics channel — zero-overhead when no subscriber,
     // and a publish failure can never affect the verdict. Only reached decisions are
@@ -599,9 +667,10 @@ export class Gate {
     ability: string,
     resource?: Resource,
     cache?: PermissionCache,
+    prefetched?: { verdict: DecisionVerdict },
   ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
     const user: User = maybeUser === NO_USER ? undefined : maybeUser;
-    const base = await this.resolveBase(maybeUser, ability, resource, cache);
+    const base = await this.resolveBase(maybeUser, ability, resource, cache, prefetched);
 
     // Global `after` hook (Laravel `Gate::after`). It may OVERRIDE only when the
     // base path produced no explicit verdict (`base.allowed === undefined`);
@@ -628,15 +697,30 @@ export class Gate {
     ability: string,
     resource?: Resource,
     cache?: PermissionCache,
+    prefetched?: { verdict: DecisionVerdict },
   ): Promise<{ allowed: boolean | undefined; reason: AuthzDecisionReason; message?: string }> {
     const user: User = maybeUser === NO_USER ? undefined : maybeUser;
 
-    // Global super-admin hook first.
-    const sa = normalizeResult(await this.superAdmin?.(user, ability));
+    // Global super-admin hook first (with the resource, so it can scope the bypass).
+    const sa = normalizeResult(await this.superAdmin?.(user, ability, resource));
     if (sa.allowed === true)
       return withMessage({ allowed: true, reason: 'super-admin' }, sa.message);
     if (sa.allowed === false)
       return withMessage({ allowed: false, reason: 'super-admin' }, sa.message);
+
+    // External decision point (Cerbos/OPA/...): authoritative allow OR deny; `undefined` abstains.
+    const decisionProvider = this.resolveDecisionProvider();
+    if (decisionProvider) {
+      const verdict = normalizeResult(
+        prefetched ? prefetched.verdict : await decisionProvider.decide(user, ability, resource),
+      );
+      if (verdict.allowed !== undefined) {
+        return withMessage(
+          { allowed: verdict.allowed, reason: 'decision-provider' },
+          verdict.message,
+        );
+      }
+    }
 
     // RBAC seam (Laravel/spatie `Gate::before` grant): if a PermissionProvider is
     // registered and the (authenticated) user holds the named permission, grant it.

@@ -106,6 +106,9 @@ importers:
         specifier: 0.7.1
         version: 0.7.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
     devDependencies:
+      '@cerbos/http':
+        specifier: 0.29.0
+        version: 0.29.0(@bufbuild/protobuf@2.15.0)(@cerbos/api@0.10.0)
       '@nestjs/common':
         specifier: 12.0.1
         version: 12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -481,6 +484,26 @@ packages:
 
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
+
+  '@bufbuild/protobuf@2.15.0':
+    resolution: {integrity: sha512-DAheWUkVr/SJTWCc+lg9dhY0eN4SaWlf4+bG1KzHeXbnqt0AfB/NX0Z+VunGlM1ki1B4zVvye27MpKh/svySUA==}
+
+  '@cerbos/api@0.10.0':
+    resolution: {integrity: sha512-j+SCITUBsb4MFAml5okmXPAOOR1BVTSNLrsdS/h2v4lEYzNiO27t/zPx+779Fe9SzHOFwPT5bhEUgYdRnHa3UA==}
+    engines: {node: '>= 22'}
+
+  '@cerbos/core@0.32.0':
+    resolution: {integrity: sha512-ZXL4qCDb+NwJmFJlWimQuegHOEIYKan6mZdYy2Jla126p+Esh5H9RNfHBnMQPbPEE35c5ShyS1ENa/wCCFtFMg==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.12.1
+
+  '@cerbos/http@0.29.0':
+    resolution: {integrity: sha512-TW3sObxvzwQNfAMqmzvbHDLr1hBZkfC9jLuBj+bZdu92n3vjcFtXKzvGK5tT6bCzHagAgW5R/qPFNO39Yj00DA==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.12.1
+      '@cerbos/api': ^0.10.0
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -3756,6 +3779,10 @@ packages:
     resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
+  uuid@14.0.2:
+    resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
+    hasBin: true
+
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -3996,6 +4023,24 @@ snapshots:
     optional: true
 
   '@borewit/text-codec@0.2.2': {}
+
+  '@bufbuild/protobuf@2.15.0': {}
+
+  '@cerbos/api@0.10.0':
+    dependencies:
+      '@bufbuild/protobuf': 2.15.0
+
+  '@cerbos/core@0.32.0(@bufbuild/protobuf@2.15.0)':
+    dependencies:
+      '@bufbuild/protobuf': 2.15.0
+      '@cerbos/api': 0.10.0
+      uuid: 14.0.2
+
+  '@cerbos/http@0.29.0(@bufbuild/protobuf@2.15.0)(@cerbos/api@0.10.0)':
+    dependencies:
+      '@bufbuild/protobuf': 2.15.0
+      '@cerbos/api': 0.10.0
+      '@cerbos/core': 0.32.0(@bufbuild/protobuf@2.15.0)
 
   '@changesets/apply-release-plan@7.1.1':
     dependencies:
@@ -7360,6 +7405,8 @@ snapshots:
   utils-merge@1.0.1: {}
 
   uuid@11.1.1: {}
+
+  uuid@14.0.2: {}
 
   vary@1.1.2: {}
 

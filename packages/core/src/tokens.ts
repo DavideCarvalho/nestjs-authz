@@ -58,6 +58,14 @@ export const PERMISSION_PROVIDER = capability('authz', 'permission-provider');
 export const ROLE_PROVIDER = capability('authz', 'role-provider');
 
 /**
+ * Cross-lib injection token for an optional {@link DecisionProvider} — an external policy
+ * decision point (Cerbos, OPA, …) that can ALLOW or DENY a resource-aware check, batch checks,
+ * and plan query scopes. Consulted with `@Optional()` right after the `superAdmin` hook; when
+ * absent the Gate behaves exactly as before. See `@dudousxd/nestjs-authz/cerbos` for an adapter.
+ */
+export const DECISION_PROVIDER = capability('authz', 'decision-provider');
+
+/**
  * Cross-lib injection token for the current-request context accessor, owned by
  * `@dudousxd/nestjs-context`. Resolved via the ecosystem protocol's typed
  * injector so there is no hand-copied magic string in this file.

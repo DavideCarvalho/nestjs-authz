@@ -30,6 +30,11 @@ export { IdParamResourceResolver } from './resource-resolver.js';
 export type { ResourceResolver } from './resource-resolver.js';
 export type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
 export type { PermissionProvider } from './permission-provider.js';
+export type {
+  DecisionProvider,
+  DecisionRequest,
+  DecisionVerdict,
+} from './decision-provider.js';
 export { defaultRoleResolver } from './role-provider.js';
 export type { RoleProvider, RoleResolver } from './role-provider.js';
 export { permissionMatches, permissionSatisfied } from './permission-matcher.js';
@@ -60,6 +65,7 @@ export {
   RESOURCE_RESOLVER,
   RESOURCE_HYDRATOR,
   CONTEXT_ACCESSOR,
+  DECISION_PROVIDER,
   PERMISSION_PROVIDER,
   ROLE_PROVIDER,
   POLICY_RESOURCE_METADATA,

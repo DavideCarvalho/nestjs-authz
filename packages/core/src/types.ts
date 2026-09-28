@@ -109,6 +109,11 @@ export type ResourceLoaderMap = Record<string, ResourceLoader>;
 export type SuperAdminHook = (
   user: User,
   ability: string,
+  /**
+   * The dispatch target: the resource instance/class of a single check, or the scoped entity
+   * class for `gate.scope(...)`. `undefined` for a model-less ability.
+   */
+  resource?: Resource,
 ) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
 
 export interface AuthzModuleOptions {

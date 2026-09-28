@@ -36,6 +36,7 @@ export interface AuthzDecisionDiagnostic {
 /** The resolution path that produced a decision — the "why" behind a 403 (or a grant). */
 export type AuthzDecisionReason =
   | 'super-admin'
+  | 'decision-provider'
   | 'permission-provider'
   | 'policy-before'
   | 'policy'

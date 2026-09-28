@@ -21,6 +21,15 @@ let mysql: StartedMySqlContainer | undefined;
 export async function setup({ provide }: GlobalSetupContext): Promise<void> {
   const dialect = process.env.AUTHZ_TEST_DIALECT ?? 'sqlite';
 
+  // An already-running server (e.g. CI services, or a local container) — don't start one.
+  if (
+    (dialect === 'postgres' && process.env.AUTHZ_TEST_PG_HOST) ||
+    (dialect === 'mysql' && process.env.AUTHZ_TEST_MYSQL_HOST)
+  ) {
+    provide('authzTestSkip', false);
+    return;
+  }
+
   try {
     if (dialect === 'postgres') {
       pg = await new PostgreSqlContainer('postgres:16-alpine')

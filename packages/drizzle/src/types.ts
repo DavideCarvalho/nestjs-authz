@@ -21,6 +21,15 @@ export interface TenantScope {
   tenantId?: string;
 }
 
+/**
+ * Tenant scope + assignment source for role mutations. `source` (default `'manual'`) records where
+ * an assignment came from (`'sso'`, `'scim'`, …) so a sync can replace just its own rows — see
+ * `setUserRoles`.
+ */
+export interface RoleAssignmentScope extends TenantScope {
+  source?: string;
+}
+
 export interface AuthzStoreOptions {
   /**
    * The Drizzle tables to query — pass the SAME object you spread into your drizzle-kit schema

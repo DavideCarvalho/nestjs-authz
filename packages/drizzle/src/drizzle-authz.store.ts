@@ -1,12 +1,23 @@
 import { randomUUID } from 'node:crypto';
-import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
+import {
+  DEFAULT_ROLE_SOURCE,
+  type RoleAssignment,
+  type UserAuthz,
+  type UserRef,
+  normalizeUserRef,
+} from '@dudousxd/nestjs-authz/store-kit';
 import { type SQL, and, eq, inArray, sql } from 'drizzle-orm';
 import { type AuthzTables, GLOBAL_TENANT, authzSchemaDdl, createAuthzTables } from './schema.js';
-import type { AuthzStoreOptions, DrizzlePgDatabase, TenantScope } from './types.js';
+import type {
+  AuthzStoreOptions,
+  DrizzlePgDatabase,
+  RoleAssignmentScope,
+  TenantScope,
+} from './types.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-drizzle`'s public `UserAuthz` keeps the same import
 // path; canonical definition lives in core's store-kit.
-export type { UserAuthz };
+export type { RoleAssignment, UserAuthz };
 
 /**
  * Drizzle-backed RBAC store (Postgres). A plain POJO that receives the app's Drizzle database in
@@ -134,20 +145,67 @@ export class DrizzleAuthzStore {
    * tenant. Omitting it makes a GLOBAL assignment that applies in every tenant (and in an
    * unscoped check). The same `(user, role)` can be assigned in multiple tenants independently.
    */
-  async assignRole(user: UserRef, roleName: string, scope?: TenantScope): Promise<void> {
+  async assignRole(user: UserRef, roleName: string, scope?: RoleAssignmentScope): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.createRole(roleName);
     await this.db
       .insert(this.tables.userRole)
-      .values({ userType: type, userId: id, roleId, tenantId: scope?.tenantId ?? GLOBAL_TENANT })
+      .values({
+        userType: type,
+        userId: id,
+        roleId,
+        tenantId: scope?.tenantId ?? GLOBAL_TENANT,
+        source: scope?.source ?? DEFAULT_ROLE_SOURCE,
+      })
       .onConflictDoNothing();
+  }
+
+  /**
+   * REPLACE the user's role assignments of ONE source (default `'manual'`) in one tenant scope
+   * with exactly `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, mappedRoles,
+   * { source: 'sso' })` on every login. Other sources' assignments are untouched, so a role held
+   * both manually and via SSO survives an SSO sync that drops it. Roles are created by name when
+   * missing. Runs in a transaction (or inside the caller's, when the store was built with `tx`).
+   */
+  async setUserRoles(
+    user: UserRef,
+    roleNames: readonly string[],
+    scope?: RoleAssignmentScope,
+  ): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+    const source = scope?.source ?? DEFAULT_ROLE_SOURCE;
+    const roleIds: string[] = [];
+    for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
+    const { userRole } = this.tables;
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(userRole)
+        .where(
+          and(
+            eq(userRole.userType, type),
+            eq(userRole.userId, id),
+            eq(userRole.tenantId, tenantId),
+            eq(userRole.source, source),
+          ),
+        );
+      if (roleIds.length > 0) {
+        await tx
+          .insert(userRole)
+          .values(
+            roleIds.map((roleId) => ({ userType: type, userId: id, roleId, tenantId, source })),
+          )
+          .onConflictDoNothing();
+      }
+    });
   }
 
   /**
    * Remove a role from a user. No-op if the role or assignment is absent. With `{ tenantId }`
    * only the assignment in THAT tenant is removed; omitting it removes the GLOBAL assignment.
+   * With `{ source }` only that source's assignment goes; without it, every source's.
    */
-  async removeRole(user: UserRef, roleName: string, scope?: TenantScope): Promise<void> {
+  async removeRole(user: UserRef, roleName: string, scope?: RoleAssignmentScope): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
@@ -160,6 +218,7 @@ export class DrizzleAuthzStore {
           eq(userRole.userId, id),
           eq(userRole.roleId, roleId),
           eq(userRole.tenantId, scope?.tenantId ?? GLOBAL_TENANT),
+          scope?.source !== undefined ? eq(userRole.source, scope.source) : undefined,
         ),
       );
   }
@@ -230,6 +289,26 @@ export class DrizzleAuthzStore {
       .innerJoin(roles, eq(roles.id, userRole.roleId))
       .where(this.userRoleWhere(type, id, scope));
     return rows.map((row) => row.name);
+  }
+
+  /**
+   * Every role assignment visible in a tenant scope, one entry per `(role, source, tenant)` —
+   * e.g. to show which roles came from SSO and which were granted by hand.
+   */
+  async getRoleAssignments(user: UserRef, scope?: TenantScope): Promise<RoleAssignment[]> {
+    const { type, id } = normalizeUserRef(user);
+    const { roles, userRole } = this.tables;
+    const rows = await this.db
+      .select({ role: roles.name, source: userRole.source, tenantId: userRole.tenantId })
+      .from(userRole)
+      .innerJoin(roles, eq(roles.id, userRole.roleId))
+      .where(this.userRoleWhere(type, id, scope))
+      .orderBy(roles.name, userRole.source);
+    return rows.map((row) => ({
+      role: row.role,
+      source: row.source,
+      tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
+    }));
   }
 
   /**

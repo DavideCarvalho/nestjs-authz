@@ -18,6 +18,15 @@ export interface TenantScope {
   tenantId?: string;
 }
 
+/**
+ * Tenant scope + assignment source for role mutations. `source` (default `'manual'`) records where
+ * an assignment came from (`'sso'`, `'scim'`, …) so a sync can replace just its own rows — see
+ * `setUserRoles`.
+ */
+export interface RoleAssignmentScope extends TenantScope {
+  source?: string;
+}
+
 export interface AuthzStoreOptions {
   /** BYO table names; each defaults to the matching {@link DEFAULT_TABLE_NAMES} entry. */
   tableNames?: TableNames;

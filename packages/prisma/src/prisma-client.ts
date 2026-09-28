@@ -45,8 +45,10 @@
  *   userType String
  *   userId   String
  *   roleId   String
+ *   // Only with `roleSources: true` (per-source assignments — see PrismaAuthzStore.setUserRoles):
+ *   // source String @default("manual")
  *
- *   @@id([userType, userId, roleId])
+ *   @@id([userType, userId, roleId])          // with roleSources: @@id([userType, userId, roleId, source])
  *   @@index([userType, userId])
  *   @@map("authz_user_role")
  * }
@@ -122,7 +124,29 @@ export interface PrismaAuthzClientLike {
    */
   // biome-ignore lint/suspicious/noExplicitAny: see doc — keeps a real PrismaClient structurally assignable.
   $queryRaw?<T = unknown>(query: TemplateStringsArray, ...values: any[]): Promise<T>;
+
+  /**
+   * OPTIONAL interactive transaction (a real `PrismaClient` provides it). Used by
+   * `setUserRoles` so the delete + re-insert of one source's assignments is atomic; clients
+   * without it run the two steps sequentially.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: see doc — keeps a real PrismaClient structurally assignable.
+  $transaction?(fn: (tx: any) => Promise<unknown>): Promise<unknown>;
 }
+
+/** Options for {@link PrismaAuthzStore}. */
+export interface PrismaAuthzStoreOptions {
+  /**
+   * Per-source role assignments (`'manual'`, `'sso'`, …). Requires a `source String
+   * @default("manual")` column on the `UserRole` model, included in its `@@id`. Default `false`
+   * so an existing schema keeps working unchanged; with it off, `source` options and
+   * `setUserRoles(…, { source })` for a non-default source throw.
+   */
+  roleSources?: boolean;
+}
+
+/** DI token for optional {@link PrismaAuthzStoreOptions}. */
+export const PRISMA_AUTHZ_STORE_OPTIONS = Symbol.for('@dudousxd/nestjs-authz-prisma:store-options');
 
 /**
  * DI token for the app-provided Prisma client ({@link PrismaAuthzClientLike})

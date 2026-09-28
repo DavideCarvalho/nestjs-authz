@@ -150,9 +150,19 @@ async function addMissingColumns(queryRunner: QueryRunner, plan: TablePlan): Pro
   for (const column of metadata.columns) {
     if (column.isVirtualProperty || existing.has(column.databaseName)) continue;
     const tableColumn = new TableColumn(TableUtils.createTableColumnOptions(column, driver));
+    // Never rewrite an existing primary key here: on MySQL, DDL isn't transactional and a failed
+    // `ADD PRIMARY KEY` after `DROP PRIMARY KEY` would leave the table without one. Columns that
+    // joined the PK later (`source`) are added as plain defaulted columns; widening the key is a
+    // deliberate migration (see README). `tenantId` keeps its historical PK self-heal.
+    if (tableColumn.isPrimary && PLAIN_ON_UPGRADE.has(tableColumn.name)) {
+      tableColumn.isPrimary = false;
+    }
     await queryRunner.addColumn(plan.name, tableColumn);
   }
 }
+
+/** PK columns added to existing tables WITHOUT widening the key (see {@link addMissingColumns}). */
+const PLAIN_ON_UPGRADE = new Set(['source']);
 
 /**
  * Ensure the RBAC schema is up to date via a DataSource (used by the store's `ensureSchema`

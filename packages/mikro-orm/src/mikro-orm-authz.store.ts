@@ -1,12 +1,23 @@
 import { randomUUID } from 'node:crypto';
-import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
+import {
+  DEFAULT_ROLE_SOURCE,
+  type RoleAssignment,
+  type UserAuthz,
+  type UserRef,
+  normalizeUserRef,
+} from '@dudousxd/nestjs-authz/store-kit';
 import type { EntityManager, MikroORM } from '@mikro-orm/core';
 import { PermissionEntity, RoleEntity, RolePermissionEntity, UserRoleEntity } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-mikro-orm`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { UserAuthz };
+export type { RoleAssignment, UserAuthz };
+
+/** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
+export interface RoleSourceOptions {
+  source?: string;
+}
 
 /**
  * MikroORM-backed RBAC store. A plain POJO that receives the `EntityManager` in its
@@ -110,23 +121,78 @@ export class MikroOrmAuthzStore {
 
   // --- user ↔ role ---
 
-  /** Assign a role to a user (creating the role by name if needed). Idempotent. */
-  async assignRole(user: UserRef, roleName: string): Promise<void> {
+  /**
+   * Assign a role to a user (creating the role by name if needed). Idempotent. `{ source }`
+   * (default `'manual'`) records where the assignment came from.
+   */
+  async assignRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.createRole(roleName);
+    const source = opts?.source ?? DEFAULT_ROLE_SOURCE;
     const em = this.em.fork();
-    const existing = await em.findOne(UserRoleEntity, { userType: type, userId: id, roleId });
+    const existing = await em.findOne(UserRoleEntity, {
+      userType: type,
+      userId: id,
+      roleId,
+      source,
+    });
     if (existing) return;
-    em.create(UserRoleEntity, { userType: type, userId: id, roleId });
+    em.create(UserRoleEntity, { userType: type, userId: id, roleId, source });
     await em.flush();
   }
 
-  /** Remove a role from a user. No-op if the role or assignment is absent. */
-  async removeRole(user: UserRef, roleName: string): Promise<void> {
+  /**
+   * Remove a role from a user. No-op if the role or assignment is absent. With `{ source }` only
+   * that source's assignment goes; without it, the role is removed from every source.
+   */
+  async removeRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
-    await this.em.fork().nativeDelete(UserRoleEntity, { userType: type, userId: id, roleId });
+    await this.em.fork().nativeDelete(UserRoleEntity, {
+      userType: type,
+      userId: id,
+      roleId,
+      ...(opts?.source !== undefined ? { source: opts.source } : {}),
+    });
+  }
+
+  /**
+   * REPLACE the user's role assignments of ONE source (default `'manual'`) with exactly
+   * `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, mappedRoles, { source: 'sso' })`
+   * on every login. Other sources' assignments are untouched, so a role held both manually and via
+   * SSO survives an SSO sync that drops it. Roles are created by name when missing. Transactional.
+   */
+  async setUserRoles(
+    user: UserRef,
+    roleNames: readonly string[],
+    opts?: RoleSourceOptions,
+  ): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    const source = opts?.source ?? DEFAULT_ROLE_SOURCE;
+    const roleIds: string[] = [];
+    for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
+    await this.em.fork().transactional(async (tx) => {
+      await tx.nativeDelete(UserRoleEntity, { userType: type, userId: id, source });
+      for (const roleId of roleIds) {
+        tx.create(UserRoleEntity, { userType: type, userId: id, roleId, source });
+      }
+      await tx.flush();
+    });
+  }
+
+  /** Every role assignment of a user, one entry per `(role, source)`. */
+  async getRoleAssignments(user: UserRef): Promise<RoleAssignment[]> {
+    const { type, id } = normalizeUserRef(user);
+    const em = this.em.fork();
+    const assignments = await em.find(UserRoleEntity, { userType: type, userId: id });
+    if (assignments.length === 0) return [];
+    const roles = await em.find(RoleEntity, { id: { $in: assignments.map((a) => a.roleId) } });
+    const nameById = new Map(roles.map((r) => [r.id, r.name]));
+    return assignments
+      .filter((a) => nameById.has(a.roleId))
+      .map((a) => ({ role: nameById.get(a.roleId) as string, source: a.source, tenantId: null }))
+      .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
   }
 
   // --- queries ---

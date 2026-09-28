@@ -1,15 +1,31 @@
 import { randomUUID } from 'node:crypto';
-import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
-import { PRISMA_CLIENT, type PrismaAuthzClientLike } from './prisma-client.js';
+import {
+  DEFAULT_ROLE_SOURCE,
+  type RoleAssignment,
+  type UserAuthz,
+  type UserRef,
+  normalizeUserRef,
+} from '@dudousxd/nestjs-authz/store-kit';
+import {
+  PRISMA_AUTHZ_STORE_OPTIONS,
+  PRISMA_CLIENT,
+  type PrismaAuthzClientLike,
+  type PrismaAuthzStoreOptions,
+} from './prisma-client.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-prisma`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { UserAuthz };
+export type { RoleAssignment, UserAuthz };
+
+/** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
+export interface RoleSourceOptions {
+  source?: string;
+}
 
 // Optional Nest DI decorators — declared structurally so this package does not need a
 // hard runtime dependency on @nestjs/common for the POJO store (the module supplies the
 // real Inject token). The store is usable as a plain POJO: `new PrismaAuthzStore(client)`.
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 /**
  * Prisma-backed RBAC store. Receives the app-owned Prisma client via the
@@ -24,7 +40,24 @@ export class PrismaAuthzStore {
   constructor(
     @Inject(PRISMA_CLIENT)
     private readonly client: PrismaAuthzClientLike,
+    @Optional()
+    @Inject(PRISMA_AUTHZ_STORE_OPTIONS)
+    private readonly options: PrismaAuthzStoreOptions = {},
   ) {}
+
+  /**
+   * The `source` filter/value for an assignment: `{ source }` when per-source assignments are on,
+   * `{}` otherwise (legacy schema without the column) — where a non-default source is an error.
+   */
+  private sourceField(source: string | undefined): { source?: string } {
+    if (this.options?.roleSources) return { source: source ?? DEFAULT_ROLE_SOURCE };
+    if (source !== undefined && source !== DEFAULT_ROLE_SOURCE) {
+      throw new Error(
+        `PrismaAuthzStore: role source "${source}" needs per-source assignments — add \`source String @default("manual")\` to the UserRole model (in its @@id) and construct the store with { roleSources: true }.`,
+      );
+    }
+    return {};
+  }
 
   /**
    * No-op: Prisma is schema-first / consumer-managed. Declare the RBAC models in your
@@ -104,23 +137,83 @@ export class PrismaAuthzStore {
 
   // --- user ↔ role ---
 
-  /** Assign a role to a user (creating the role by name if needed). Idempotent. */
-  async assignRole(user: UserRef, roleName: string): Promise<void> {
+  /**
+   * Assign a role to a user (creating the role by name if needed). Idempotent. `{ source }`
+   * (default `'manual'`) needs `roleSources: true`.
+   */
+  async assignRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
+    const source = this.sourceField(opts?.source);
     const roleId = await this.createRole(roleName);
     const existing = await this.client.userRole.findFirst({
-      where: { userType: type, userId: id, roleId },
+      where: { userType: type, userId: id, roleId, ...source },
     });
     if (existing) return;
-    await this.client.userRole.create({ data: { userType: type, userId: id, roleId } });
+    await this.client.userRole.create({ data: { userType: type, userId: id, roleId, ...source } });
   }
 
-  /** Remove a role from a user. No-op if the role or assignment is absent. */
-  async removeRole(user: UserRef, roleName: string): Promise<void> {
+  /**
+   * Remove a role from a user. No-op if the role or assignment is absent. With `{ source }` only
+   * that source's assignment goes; without it, the role is removed from every source.
+   */
+  async removeRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
+    const source = opts?.source === undefined ? {} : this.sourceField(opts.source);
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
-    await this.client.userRole.deleteMany({ where: { userType: type, userId: id, roleId } });
+    await this.client.userRole.deleteMany({
+      where: { userType: type, userId: id, roleId, ...source },
+    });
+  }
+
+  /**
+   * REPLACE the user's role assignments of ONE source (default `'manual'`) with exactly
+   * `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, mappedRoles, { source: 'sso' })`
+   * on every login; other sources' assignments are untouched. Roles are created by name when
+   * missing. Atomic when the client has `$transaction`. Without `roleSources: true` there is only
+   * one (implicit manual) source, so this replaces ALL of the user's roles.
+   */
+  async setUserRoles(
+    user: UserRef,
+    roleNames: readonly string[],
+    opts?: RoleSourceOptions,
+  ): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    const source = this.sourceField(opts?.source);
+    const roleIds: string[] = [];
+    for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
+    const replace = async (client: PrismaAuthzClientLike) => {
+      await client.userRole.deleteMany({ where: { userType: type, userId: id, ...source } });
+      for (const roleId of roleIds) {
+        await client.userRole.create({ data: { userType: type, userId: id, roleId, ...source } });
+      }
+    };
+    if (typeof this.client.$transaction === 'function') {
+      await this.client.$transaction((tx: PrismaAuthzClientLike) => replace(tx));
+    } else {
+      await replace(this.client);
+    }
+  }
+
+  /** Every role assignment of a user, one entry per `(role, source)`. */
+  async getRoleAssignments(user: UserRef): Promise<RoleAssignment[]> {
+    const { type, id } = normalizeUserRef(user);
+    const assignments = await this.client.userRole.findMany({
+      where: { userType: type, userId: id },
+    });
+    if (assignments.length === 0) return [];
+    const roles = await this.client.role.findMany({
+      where: { id: { in: [...new Set(assignments.map((a) => a.roleId as string))] } },
+    });
+    const nameById = new Map(roles.map((r) => [r.id as string, r.name as string]));
+    return assignments
+      .filter((a) => nameById.has(a.roleId as string))
+      .map((a) => ({
+        role: nameById.get(a.roleId as string) as string,
+        source: (a.source as string | undefined) ?? DEFAULT_ROLE_SOURCE,
+        tenantId: null,
+      }))
+      .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
   }
 
   // --- queries ---
@@ -132,7 +225,7 @@ export class PrismaAuthzStore {
       where: { userType: type, userId: id },
     });
     if (assignments.length === 0) return [];
-    const roleIds = assignments.map((a) => a.roleId as string);
+    const roleIds = [...new Set(assignments.map((a) => a.roleId as string))];
     const roles = await this.client.role.findMany({ where: { id: { in: roleIds } } });
     return roles.map((r) => r.name as string);
   }

@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { type UserAuthz, type UserRef, normalizeUserRef } from '@dudousxd/nestjs-authz/store-kit';
+import {
+  DEFAULT_ROLE_SOURCE,
+  type RoleAssignment,
+  type UserAuthz,
+  type UserRef,
+  normalizeUserRef,
+} from '@dudousxd/nestjs-authz/store-kit';
 import type { DataSource } from 'typeorm';
 import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
 import { Placeholders, assertSafeIdentifier } from './sql.js';
-import type { AuthzStoreOptions, TenantScope } from './types.js';
+import type { AuthzStoreOptions, RoleAssignmentScope, TenantScope } from './types.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-typeorm`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { UserAuthz };
+export type { RoleAssignment, UserAuthz };
 
 /**
  * TypeORM-backed RBAC store. A plain POJO that receives the `DataSource` in its
@@ -187,36 +193,83 @@ export class TypeOrmAuthzStore {
    * applies in every tenant (and in an unscoped check). The same `(user, role)` can
    * be assigned in multiple tenants independently.
    */
-  async assignRole(user: UserRef, roleName: string, scope?: TenantScope): Promise<void> {
+  async assignRole(user: UserRef, roleName: string, scope?: RoleAssignmentScope): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.createRole(roleName);
-    const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+    await this.insertAssignment(
+      (sql, params) => this.dataSource.query(sql, params),
+      [type, id, roleId, scope?.tenantId ?? GLOBAL_TENANT, scope?.source ?? DEFAULT_ROLE_SOURCE],
+    );
+  }
+
+  private async insertAssignment(
+    run: (sql: string, params: unknown[]) => Promise<unknown>,
+    values: [string, string, string, string, string],
+  ): Promise<void> {
     const p = this.params();
-    await this.dataSource.query(
+    await run(
       `${this.insertIgnoreVerb()} INTO ${this.table('userRole')} (${this.col(
         'userType',
-      )}, ${this.col('userId')}, ${this.col('roleId')}, ${this.col('tenantId')}) VALUES (${p.next()}, ${p.next()}, ${p.next()}, ${p.next()})${this.insertIgnoreSuffix()}`,
-      [type, id, roleId, tenantId],
+      )}, ${this.col('userId')}, ${this.col('roleId')}, ${this.col('tenantId')}, ${this.col(
+        'source',
+      )}) VALUES (${p.next()}, ${p.next()}, ${p.next()}, ${p.next()}, ${p.next()})${this.insertIgnoreSuffix()}`,
+      values,
     );
+  }
+
+  /**
+   * REPLACE the user's role assignments of ONE source (default `'manual'`) in one tenant scope
+   * with exactly `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, groupsToRoles,
+   * { source: 'sso' })` on every login. Assignments from other sources (manual grants, another
+   * IdP) are untouched, so a role held both manually and via SSO survives an SSO sync that drops
+   * it. Roles are created by name when missing. Runs in a transaction.
+   */
+  async setUserRoles(
+    user: UserRef,
+    roleNames: readonly string[],
+    scope?: RoleAssignmentScope,
+  ): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+    const source = scope?.source ?? DEFAULT_ROLE_SOURCE;
+    const roleIds: string[] = [];
+    for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
+    await this.dataSource.transaction(async (manager) => {
+      const run = (sql: string, params: unknown[]) => manager.query(sql, params);
+      const p = this.params();
+      await run(
+        `DELETE FROM ${this.table('userRole')} WHERE ${this.col('userType')} = ${p.next()} AND ${this.col(
+          'userId',
+        )} = ${p.next()} AND ${this.col('tenantId')} = ${p.next()} AND ${this.col('source')} = ${p.next()}`,
+        [type, id, tenantId, source],
+      );
+      for (const roleId of roleIds) {
+        await this.insertAssignment(run, [type, id, roleId, tenantId, source]);
+      }
+    });
   }
 
   /**
    * Remove a role from a user. No-op if the role or assignment is absent. When
    * `{ tenantId }` is given, only the assignment in THAT tenant is removed; omitting
-   * it removes the GLOBAL assignment (tenant `''`).
+   * it removes the GLOBAL assignment (tenant `''`). With `{ source }` only that source's
+   * assignment is removed; without it the role is removed from EVERY source.
    */
-  async removeRole(user: UserRef, roleName: string, scope?: TenantScope): Promise<void> {
+  async removeRole(user: UserRef, roleName: string, scope?: RoleAssignmentScope): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
     const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
     const p = this.params();
-    await this.dataSource.query(
-      `DELETE FROM ${this.table('userRole')} WHERE ${this.col('userType')} = ${p.next()} AND ${this.col(
-        'userId',
-      )} = ${p.next()} AND ${this.col('roleId')} = ${p.next()} AND ${this.col('tenantId')} = ${p.next()}`,
-      [type, id, roleId, tenantId],
-    );
+    const params: unknown[] = [type, id, roleId, tenantId];
+    let sql = `DELETE FROM ${this.table('userRole')} WHERE ${this.col('userType')} = ${p.next()} AND ${this.col(
+      'userId',
+    )} = ${p.next()} AND ${this.col('roleId')} = ${p.next()} AND ${this.col('tenantId')} = ${p.next()}`;
+    if (scope?.source !== undefined) {
+      sql += ` AND ${this.col('source')} = ${p.next()}`;
+      params.push(scope.source);
+    }
+    await this.dataSource.query(sql, params);
   }
 
   // --- user ↔ permission (DIRECT grant, no role) ---
@@ -292,13 +345,41 @@ export class TypeOrmAuthzStore {
     const userId = p.next();
     const filter = this.tenantFilter('ur', scope, p);
     const rows = (await this.dataSource.query(
-      `SELECT r.${this.col('name')} AS name
+      `SELECT DISTINCT r.${this.col('name')} AS name
        FROM ${this.table('userRole')} ur
        JOIN ${this.table('roles')} r ON r.${this.col('id')} = ur.${this.col('roleId')}
        WHERE ur.${this.col('userType')} = ${userType} AND ur.${this.col('userId')} = ${userId}${filter}`,
       [type, id, ...this.tenantParams(scope)],
     )) as Array<{ name: string }>;
     return rows.map((row) => row.name);
+  }
+
+  /**
+   * Every role assignment visible in a tenant scope (global ones always; the tenant's own when
+   * `{ tenantId }` is given), one entry per `(role, source, tenant)` — e.g. to show which roles
+   * came from SSO and which were granted by hand.
+   */
+  async getRoleAssignments(user: UserRef, scope?: TenantScope): Promise<RoleAssignment[]> {
+    const { type, id } = normalizeUserRef(user);
+    const p = this.params();
+    const userType = p.next();
+    const userId = p.next();
+    const filter = this.tenantFilter('ur', scope, p);
+    const rows = (await this.dataSource.query(
+      `SELECT r.${this.col('name')} AS role, ur.${this.col('source')} AS source, ur.${this.col(
+        'tenantId',
+      )} AS ${this.col('tenantId')}
+       FROM ${this.table('userRole')} ur
+       JOIN ${this.table('roles')} r ON r.${this.col('id')} = ur.${this.col('roleId')}
+       WHERE ur.${this.col('userType')} = ${userType} AND ur.${this.col('userId')} = ${userId}${filter}
+       ORDER BY r.${this.col('name')}, ur.${this.col('source')}`,
+      [type, id, ...this.tenantParams(scope)],
+    )) as Array<{ role: string; source: string; tenantId: string }>;
+    return rows.map((row) => ({
+      role: row.role,
+      source: row.source,
+      tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
+    }));
   }
 
   /**

@@ -42,7 +42,11 @@ describe('createAuthzTables / authzSchemaDdl', () => {
       for (const column of cfg.columns) expect(create).toContain(`"${column.name}"`);
     }
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS');
-    expect(ddl).not.toMatch(/DROP|ALTER/);
+    expect(ddl).not.toMatch(/DROP/);
+    // The only ALTER is the non-destructive, idempotent column add for pre-source tables.
+    for (const statement of authzSchemaDdl().filter((x) => x.startsWith('ALTER'))) {
+      expect(statement).toMatch(/^ALTER TABLE "authz_user_role" ADD COLUMN IF NOT EXISTS "source"/);
+    }
   });
 
   it('ensureSchema creates tables matching the Drizzle definition, idempotently', async () => {

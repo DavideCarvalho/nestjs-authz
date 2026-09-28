@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_SOURCE } from '@dudousxd/nestjs-authz/store-kit';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 /**
@@ -96,11 +97,23 @@ export class UserRoleEntity {
   @PrimaryColumn({ type: 'varchar', length: 191 })
   userId!: string;
 
-  @PrimaryColumn({ type: 'varchar', length: 191 })
+  // 64 (not 191): role ids are store-generated UUIDs, and the 5-column PK must stay under
+  // MySQL/utf8mb4's 3072-byte index limit (191+191+64+191+64 chars × 4 bytes = 2804).
+  @PrimaryColumn({ type: 'varchar', length: 64 })
   roleId!: string;
 
   @PrimaryColumn({ type: 'varchar', length: 191, default: GLOBAL_TENANT })
   tenantId!: string;
+
+  /**
+   * Where the assignment came from (`'manual'`, `'sso'`, `'scim'`, …). Part of the PK on tables
+   * created by this version, so the same role can be held through two sources (removing one keeps
+   * the role). On OLDER tables `ensureAuthzSchema` adds it as a plain defaulted column (existing
+   * rows become manual assignments) and never touches the existing primary key — widen it with the
+   * migration in the README to allow one role from two sources.
+   */
+  @PrimaryColumn({ type: 'varchar', length: 64, default: DEFAULT_ROLE_SOURCE })
+  source!: string;
 }
 
 /**

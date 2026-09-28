@@ -34,3 +34,22 @@ export function normalizeUserRef(ref: UserRef): { type: string; id: string } {
   }
   return { type: ref.type ?? 'user', id: String(ref.id) };
 }
+
+/**
+ * The source recorded on a role assignment when none is given — assignments made by hand
+ * (`assignRole`) and every row that predates per-source assignments.
+ */
+export const DEFAULT_ROLE_SOURCE = 'manual';
+
+/** One persisted role assignment, as returned by the adapters' `getRoleAssignments`. */
+export interface RoleAssignment {
+  /** Role name. */
+  role: string;
+  /**
+   * Where the assignment came from (`'manual'`, `'sso'`, `'scim'`, …). A role held through two
+   * sources is two assignments — removing one source keeps the role.
+   */
+  source: string;
+  /** Tenant the assignment is scoped to, or `null` for a global one (tenant-aware adapters). */
+  tenantId: string | null;
+}

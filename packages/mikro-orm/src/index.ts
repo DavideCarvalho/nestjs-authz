@@ -23,7 +23,11 @@ export {
 } from './repositories.js';
 export { authzSchemaSql, ensureAuthzSchema } from './schema.js';
 export { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';
-export type { UserAuthz } from './mikro-orm-authz.store.js';
+export type {
+  RoleAssignment,
+  RoleSourceOptions,
+  UserAuthz,
+} from './mikro-orm-authz.store.js';
 export {
   AUTHZ_RBAC_OPTIONS,
   AUTHZ_RBAC_STORE,

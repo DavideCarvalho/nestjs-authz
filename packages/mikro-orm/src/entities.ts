@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_SOURCE } from '@dudousxd/nestjs-authz/store-kit';
 import { EntityRepositoryType, EntitySchema } from '@mikro-orm/core';
 import {
   AuthzPermissionRepository,
@@ -88,6 +89,11 @@ export class UserRoleEntity {
   userType!: string;
   userId!: string;
   roleId!: string;
+  /**
+   * Where the assignment came from (`'manual'`, `'sso'`, …). Part of the PK so a role can be held
+   * through two sources. Defaults to `'manual'` (older rows self-heal to it).
+   */
+  source!: string;
 }
 
 /** The four {@link EntitySchema} definitions produced by {@link createAuthzEntitySchemas}. */
@@ -175,6 +181,12 @@ export function createAuthzEntitySchemas(
       userType: { type: 'string', length: 191, primary: true },
       userId: { type: 'string', length: 191, primary: true },
       roleId: { type: 'string', length: 191, primary: true },
+      source: {
+        type: 'string',
+        length: 64,
+        primary: true,
+        default: DEFAULT_ROLE_SOURCE,
+      },
     },
     indexes: [{ name: `${names.userRole}_user_idx`, properties: ['userType', 'userId'] }],
   });

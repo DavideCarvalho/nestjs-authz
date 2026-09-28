@@ -128,6 +128,40 @@ belongs to drizzle-kit.
 
 Users are referenced **by id only**. This package never owns a users table.
 
+## Role sources (manual vs SSO/SCIM)
+
+Every role assignment records a `source`. It defaults to `'manual'`, so existing calls and existing
+rows keep their meaning. A sync replaces only its own source:
+
+```ts
+// On each SSO login: exactly these roles come from SSO. Manual grants are untouched.
+await store.setUserRoles(user, rolesFromIdpGroups, { source: 'sso', tenantId: 'acme' });
+
+await store.assignRole(user, 'editor');                      // source 'manual'
+await store.assignRole(user, 'editor', { source: 'scim' });  // a second assignment of the same role
+await store.removeRole(user, 'editor', { source: 'scim' });  // still an editor (manual)
+await store.removeRole(user, 'editor');                      // no source: removed from every source
+await store.getRoleAssignments(user); // [{ role, source, tenantId }]
+```
+
+`getRolesForUser` and the Gate seams see the distinct role names from all sources.
+
+### Migrating an existing database
+
+`authz_user_role` gains a `"source"` column (`NOT NULL DEFAULT 'manual'`), and the primary key
+becomes `("userType","userId","roleId","tenantId","source")`.
+
+- **drizzle-kit:** regenerate the migration from `createAuthzTables()`.
+- **`ensureSchema()`:** it adds the column (`ADD COLUMN IF NOT EXISTS`, so existing rows become
+  manual assignments) but doesn't touch the key. Widen the key once, so that one role can come
+  from two sources:
+
+```sql
+ALTER TABLE "authz_user_role"
+  DROP CONSTRAINT "authz_user_role_pkey",
+  ADD CONSTRAINT "authz_user_role_pkey" PRIMARY KEY ("userType","userId","roleId","tenantId","source");
+```
+
 ## Testing
 
 `pnpm test` runs every spec against an in-process Postgres (PGlite), so it needs no Docker.

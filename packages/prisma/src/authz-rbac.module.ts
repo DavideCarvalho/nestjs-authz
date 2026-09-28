@@ -44,6 +44,11 @@ export interface AuthzRbacModuleOptions {
    */
   autoCreateSchema?: boolean;
   /**
+   * Per-source role assignments (see {@link PrismaAuthzStore.setUserRoles}); requires the
+   * `source` column on `UserRole`. Only used when the module builds the store from `client`.
+   */
+  roleSources?: boolean;
+  /**
    * Derive a {@link UserRef} from the Gate's current user. Defaults to
    * {@link defaultUserRefMapper} (`{ type, id }` or `{ id }`).
    */
@@ -69,7 +74,9 @@ export function defaultUserRefMapper(user: unknown): UserRef | undefined {
 /** Resolve a concrete store from the options (building one from `client` when needed). */
 function resolveStore(options: AuthzRbacModuleOptions): PrismaAuthzStore {
   if (options.store) return options.store;
-  if (options.client) return new PrismaAuthzStore(options.client);
+  if (options.client) {
+    return new PrismaAuthzStore(options.client, options.roleSources ? { roleSources: true } : {});
+  }
   throw new Error('AuthzRbacModule (prisma): provide either `store` or `client` in the options.');
 }
 

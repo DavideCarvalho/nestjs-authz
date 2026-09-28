@@ -139,6 +139,40 @@ export class AddAuthz extends Migration {
 }
 ```
 
+## Role sources (manual vs SSO/SCIM)
+
+Every role assignment records a `source`. It defaults to `'manual'`, so existing calls and existing
+rows keep their meaning. A sync replaces only its own source:
+
+```ts
+// On each SSO login: exactly these roles come from SSO. Manual grants are untouched.
+await store.setUserRoles(user, rolesFromIdpGroups, { source: 'sso' });
+
+await store.assignRole(user, 'editor');                      // source 'manual'
+await store.assignRole(user, 'editor', { source: 'scim' });  // a second assignment of the same role
+await store.removeRole(user, 'editor', { source: 'scim' });  // still an editor (manual)
+await store.removeRole(user, 'editor');                      // no source: removed from every source
+await store.getRoleAssignments(user); // [{ role, source, tenantId }]
+```
+
+`getRolesForUser` and the Gate seams see the distinct role names from all sources.
+
+### Migrating an existing database
+
+`ensureAuthzSchema` / `autoCreateSchema` add the `source` column to `authz_user_role`
+(`NOT NULL DEFAULT 'manual'`), so existing rows become manual assignments. They don't widen the
+primary key. Until you widen it, a role can come from only one source per user: assigning it from
+a second source fails with a duplicate-key error. Widen the key once:
+
+```sql
+-- PostgreSQL (default constraint name; check yours with \d authz_user_role)
+ALTER TABLE authz_user_role DROP CONSTRAINT authz_user_role_pkey,
+  ADD PRIMARY KEY (user_type, user_id, role_id, source);
+-- MySQL
+ALTER TABLE authz_user_role DROP PRIMARY KEY, ADD PRIMARY KEY (user_type, user_id, role_id, source);
+-- SQLite: recreate the table with the 4-column key (SQLite cannot alter a primary key).
+```
+
 ## License
 
 MIT

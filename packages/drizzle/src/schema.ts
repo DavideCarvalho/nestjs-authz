@@ -1,4 +1,5 @@
 import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
+import { DEFAULT_ROLE_SOURCE } from '@dudousxd/nestjs-authz/store-kit';
 import {
   getTableConfig,
   index,
@@ -102,11 +103,13 @@ export function createAuthzTables(opts: Pick<AuthzStoreOptions, 'tableNames' | '
       userId: ref('userId'),
       roleId: ref('roleId'),
       tenantId: varchar('tenantId', { length: 191 }).notNull().default(GLOBAL_TENANT),
+      /** Where the assignment came from (`'manual'`, `'sso'`, …) — see `setUserRoles`. */
+      source: varchar('source', { length: 191 }).notNull().default(DEFAULT_ROLE_SOURCE),
     },
     (t) => [
       primaryKey({
         name: `${names.userRole}_pkey`,
-        columns: [t.userType, t.userId, t.roleId, t.tenantId],
+        columns: [t.userType, t.userId, t.roleId, t.tenantId, t.source],
       }),
       index(`${names.userRole}_user_idx`).on(t.userType, t.userId),
     ],
@@ -194,7 +197,8 @@ export function authzSchemaDdl(tables: AuthzTables = authzTables): string[] {
       vc('userId'),
       vc('roleId'),
       `"tenantId" varchar(191) DEFAULT '' NOT NULL`,
-      `CONSTRAINT ${q(`${userRole.name}_pkey`)} PRIMARY KEY("userType","userId","roleId","tenantId")`,
+      `"source" varchar(191) DEFAULT '${DEFAULT_ROLE_SOURCE}' NOT NULL`,
+      `CONSTRAINT ${q(`${userRole.name}_pkey`)} PRIMARY KEY("userType","userId","roleId","tenantId","source")`,
     ]),
   );
   ddl.push(
@@ -204,6 +208,11 @@ export function authzSchemaDdl(tables: AuthzTables = authzTables): string[] {
       vc('permissionId'),
       `CONSTRAINT ${q(`${userPermission.name}_pkey`)} PRIMARY KEY("userType","userId","permissionId")`,
     ]),
+  );
+  // Tables created before per-source assignments: add the column (existing rows become
+  // 'manual'). Widening the primary key to include "source" is a manual migration — see README.
+  ddl.push(
+    `ALTER TABLE ${userRole.ref} ADD COLUMN IF NOT EXISTS "source" varchar(191) DEFAULT '${DEFAULT_ROLE_SOURCE}' NOT NULL`,
   );
   for (const t of [userRole, userPermission]) {
     ddl.push(

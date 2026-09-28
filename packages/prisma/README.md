@@ -102,6 +102,49 @@ gate.forUser(user).allows('posts.publish'); // true (PERMISSION_PROVIDER seam)
 gate.forUser(user).hasRole('editor');       // true (ROLE_PROVIDER seam)
 ```
 
+## Role sources (manual vs SSO/SCIM)
+
+Every role assignment records a `source`. It defaults to `'manual'`, so existing calls and existing
+rows keep their meaning. Needs `roleSources: true`, as described below. A sync replaces only its own source:
+
+```ts
+// On each SSO login: exactly these roles come from SSO. Manual grants are untouched.
+await store.setUserRoles(user, rolesFromIdpGroups, { source: 'sso' });
+
+await store.assignRole(user, 'editor');                      // source 'manual'
+await store.assignRole(user, 'editor', { source: 'scim' });  // a second assignment of the same role
+await store.removeRole(user, 'editor', { source: 'scim' });  // still an editor (manual)
+await store.removeRole(user, 'editor');                      // no source: removed from every source
+await store.getRoleAssignments(user); // [{ role, source, tenantId }]
+```
+
+`getRolesForUser` and the Gate seams see the distinct role names from all sources.
+
+### Enabling it (schema change)
+
+Prisma is schema-first, so per-source assignments are **opt-in**. With the default
+`roleSources: false`, the store never sends a `source` field and your current schema keeps
+working. `setUserRoles` then replaces *all* of the user's roles, and a non-default `source`
+throws. To enable per-source assignments:
+
+```prisma
+model UserRole {
+  userType String
+  userId   String
+  roleId   String
+  source   String @default("manual")
+
+  @@id([userType, userId, roleId, source])
+  @@index([userType, userId])
+  @@map("authz_user_role")
+}
+```
+
+Then run `prisma migrate dev`. Existing rows get `source = 'manual'`. Finally, build the store
+with the option: `new PrismaAuthzStore(prisma, { roleSources: true })`, or
+`AuthzRbacModule.forRoot({ client: prisma, roleSources: true })`. `setUserRoles` uses
+`prisma.$transaction` when it's available.
+
 ## License
 
 MIT

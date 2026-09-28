@@ -1,0 +1,70 @@
+{
+  "name": "@dudousxd/nestjs-authz-drizzle",
+  "version": "0.0.0",
+  "description": "Drizzle ORM RBAC persistence + query-scope compiler for @dudousxd/nestjs-authz — roles, permissions, a Gate seam, and gate.scope() → Drizzle WHERE (zero connection ownership).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavideCarvalho/nestjs-authz.git",
+    "directory": "packages/drizzle"
+  },
+  "homepage": "https://davidecarvalho.github.io/aviary/docs/authz",
+  "bugs": {
+    "url": "https://github.com/DavideCarvalho/nestjs-authz/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "authorization",
+    "authz",
+    "rbac",
+    "roles",
+    "permissions",
+    "drizzle",
+    "drizzle-orm"
+  ],
+  "author": "Davi Carvalho <davi@goflip.ai>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist/", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:db:pg": "AUTHZ_TEST_DIALECT=postgres vitest run --config vitest.db.config.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@dudousxd/nestjs-authz": ">=0.1.0",
+    "@nestjs/common": ">=10.0.0",
+    "@nestjs/core": ">=10.0.0",
+    "drizzle-orm": ">=0.40.0 <1.0.0",
+    "reflect-metadata": ">=0.1.13"
+  },
+  "devDependencies": {
+    "@dudousxd/nestjs-authz": "workspace:^",
+    "@electric-sql/pglite": "0.4.6",
+    "@nestjs/common": "12.0.1",
+    "@nestjs/core": "12.0.1",
+    "@nestjs/testing": "12.0.1",
+    "@testcontainers/postgresql": "12.1.0",
+    "@types/node": "20.19.43",
+    "@types/pg": "8.23.1",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

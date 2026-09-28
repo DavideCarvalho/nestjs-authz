@@ -8,7 +8,7 @@ description: >
   segment wildcard matching (granted posts.* satisfies posts.update, * satisfies anything).
   ROLE_PROVIDER (a RoleProvider.getRoles) feeds coarse checks gate.hasRole / @Roles, unioned
   with the user-object defaultRoleResolver (reads user.roles / user.role). Both tokens are
-  capability symbols the ORM adapters (@dudousxd/nestjs-authz-typeorm / -prisma / -mikro-orm)
+  capability symbols the ORM adapters (@dudousxd/nestjs-authz-typeorm / -prisma / -mikro-orm / -drizzle)
   register via AuthzRbacModule; seams are grant-only — a false result never DENIES, it falls
   through. Covers resolveRoles override and zero-table role checks.
 metadata:

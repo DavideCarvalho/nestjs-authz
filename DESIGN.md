@@ -81,7 +81,7 @@ AuthzRbacModule.forRootAsync({
 });
 ```
 
-`ensureAuthzSchema` = **cria tabela faltante + adiciona coluna faltante** (non-destructive); colunas pós-v1 nullable/default. Adapters: `nestjs-authz-{typeorm,mikro-orm,prisma}` (mikro usa `getUpdateSchemaSQL({safe:true})`; prisma consumer-managed).
+`ensureAuthzSchema` = **cria tabela faltante + adiciona coluna faltante** (non-destructive); colunas pós-v1 nullable/default. Adapters: `nestjs-authz-{typeorm,mikro-orm,prisma,drizzle}` (mikro usa `getUpdateSchemaSQL({safe:true})`; prisma consumer-managed).
 
 ## 6. Colas (o diferencial)
 
@@ -133,7 +133,7 @@ por `idParam`.
 
 ## 8. Pacotes
 - `@dudousxd/nestjs-authz` — core: gates + policies + `@Can` guard + resolver (zero DB)
-- `@dudousxd/nestjs-authz-{typeorm,mikro-orm,prisma}` — RBAC persistido (§5)
+- `@dudousxd/nestjs-authz-{typeorm,mikro-orm,prisma,drizzle}` — RBAC persistido (§5)
 - `@dudousxd/nestjs-authz-{inertia,codegen,react,telescope,testing}` — colas (§6)
 
 ## 8.1 Adições pós-v1 (batch, cache, direct/tenant, testing)

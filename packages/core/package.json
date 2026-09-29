@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "NestJS authorization — Laravel-style Gates & Policies, @Can guard, resource resolver (zero DB).",
   "license": "MIT",
   "repository": {

@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz-drizzle
 
+## 0.1.1
+
+### Patch Changes
+
+- [#59](https://github.com/DavideCarvalho/nestjs-authz/pull/59) [`a4ef88b`](https://github.com/DavideCarvalho/nestjs-authz/commit/a4ef88bb6e4b3a5381815816cf1530ee2114f3cd) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Republish from CI through npm trusted publishing (OIDC) so the release carries a provenance attestation; 0.1.0 was a one-time manual first publish.
+
 ## 0.1.0
 
 ### Minor Changes

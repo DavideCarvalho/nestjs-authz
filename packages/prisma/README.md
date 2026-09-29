@@ -145,6 +145,37 @@ with the option: `new PrismaAuthzStore(prisma, { roleSources: true })`, or
 `AuthzRbacModule.forRoot({ client: prisma, roleSources: true })`. `setUserRoles` uses
 `prisma.$transaction` when it's available.
 
+## Admin management
+
+Operations for an admin UI (role editor, member list, account deletion):
+
+```ts
+// Replace a role's permissions with exactly this set (spatie's syncPermissions). Creates missing
+// roles/permissions by name; the link swap is atomic when the client has `$transaction` (a real `PrismaClient` does).
+await store.syncRolePermissions('editor', ['posts.view', 'posts.edit']);
+
+// Each role's permission names in three queries, whatever the number of roles. Existing roles are keys (even with no permissions);
+// roles that don't exist are absent.
+await store.getRolePermissions(['editor', 'viewer']); // { editor: ['posts.edit', 'posts.view'], viewer: [] }
+
+// Delete a role, its permission links and every assignment of it (all sources). Returns false
+// when the role didn't exist. Permissions are kept.
+await store.deleteRole('editor');
+
+// Raw assignment rows: { userType, userId, role, source, tenantId }[],
+// ordered by (userType, userId, role, source).
+await store.listRoleAssignments({ role: ['admin', 'owner'], source: 'sso' });
+await store.listRoleAssignments({ user: { type: 'user', id: 7 } });
+
+// Account deleted: drop every role assignment of the user (all sources).
+await store.removeUser({ type: 'user', id: 7 });
+```
+
+This adapter has no tenant-scoped assignments, so every row has `tenantId: null`:
+`listRoleAssignments({ tenantId: null })` lists everything and a tenant id string matches
+nothing. Without `roleSources: true` every row is `'manual'`, so filtering by another
+`source` matches nothing.
+
 ## License
 
 MIT

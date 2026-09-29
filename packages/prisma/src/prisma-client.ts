@@ -126,9 +126,9 @@ export interface PrismaAuthzClientLike {
   $queryRaw?<T = unknown>(query: TemplateStringsArray, ...values: any[]): Promise<T>;
 
   /**
-   * OPTIONAL interactive transaction (a real `PrismaClient` provides it). Used by
-   * `setUserRoles` so the delete + re-insert of one source's assignments is atomic; clients
-   * without it run the two steps sequentially.
+   * OPTIONAL interactive transaction (a real `PrismaClient` provides it). Used by the
+   * multi-statement mutations (`setUserRoles`, `syncRolePermissions`, `deleteRole`) so they are
+   * atomic; clients without it run the steps sequentially.
    */
   // biome-ignore lint/suspicious/noExplicitAny: see doc — keeps a real PrismaClient structurally assignable.
   $transaction?(fn: (tx: any) => Promise<unknown>): Promise<unknown>;

@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
+  type RoleAssignmentFilter,
   type UserAuthz,
   type UserRef,
+  type UserRoleAssignment,
+  compareUserRoleAssignments,
   normalizeUserRef,
+  roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import type { DataSource } from 'typeorm';
 import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
@@ -14,7 +18,7 @@ import type { AuthzStoreOptions, RoleAssignmentScope, TenantScope } from './type
 
 // Re-exported so `@dudousxd/nestjs-authz-typeorm`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { RoleAssignment, UserAuthz };
+export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /**
  * TypeORM-backed RBAC store. A plain POJO that receives the `DataSource` in its
@@ -183,6 +187,99 @@ export class TypeOrmAuthzStore {
     );
   }
 
+  /** `(${p1}, ${p2}, …)` — one placeholder per value, for an `IN` list. */
+  private inList(p: Placeholders, count: number): string {
+    return `(${Array.from({ length: count }, () => p.next()).join(', ')})`;
+  }
+
+  /**
+   * Delete a role together with its role→permission links and EVERY user assignment of it (all
+   * tenants, all sources), in one transaction. Returns whether the role existed. The permissions
+   * themselves are kept (other roles or direct grants may use them).
+   */
+  async deleteRole(roleName: string): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const p = this.params();
+      const rows = (await manager.query(
+        `SELECT ${this.col('id')} AS id FROM ${this.table('roles')} WHERE ${this.col('name')} = ${p.next()}`,
+        [roleName],
+      )) as Array<{ id: string }>;
+      const roleId = rows[0]?.id;
+      if (!roleId) return false;
+      for (const [table, column] of [
+        ['userRole', 'roleId'],
+        ['rolePermission', 'roleId'],
+        ['roles', 'id'],
+      ] as const) {
+        await manager.query(
+          `DELETE FROM ${this.table(table)} WHERE ${this.col(column)} = ${this.params().next()}`,
+          [roleId],
+        );
+      }
+      return true;
+    });
+  }
+
+  /**
+   * REPLACE the role's permission set with exactly `permissionNames` (spatie's
+   * `syncPermissions`): links not in the list are removed, missing ones added. The role and the
+   * permissions are created by name when missing (idempotently, before the swap); the
+   * delete + re-insert of the links runs in one transaction. An empty list leaves the role with
+   * no permissions.
+   */
+  async syncRolePermissions(roleName: string, permissionNames: readonly string[]): Promise<void> {
+    const roleId = await this.createRole(roleName);
+    const permissionIds: string[] = [];
+    for (const name of new Set(permissionNames)) {
+      permissionIds.push(await this.createPermission(name));
+    }
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `DELETE FROM ${this.table('rolePermission')} WHERE ${this.col('roleId')} = ${this.params().next()}`,
+        [roleId],
+      );
+      for (const permissionId of permissionIds) {
+        const p = this.params();
+        await manager.query(
+          `${this.insertIgnoreVerb()} INTO ${this.table('rolePermission')} (${this.col(
+            'roleId',
+          )}, ${this.col('permissionId')}) VALUES (${p.next()}, ${p.next()})${this.insertIgnoreSuffix()}`,
+          [roleId, permissionId],
+        );
+      }
+    });
+  }
+
+  /**
+   * The permission names of each named role, in one query. Every EXISTING requested role is a
+   * key (mapped to `[]` when it has no permissions); roles that don't exist are ABSENT from the
+   * result. Names are sorted.
+   */
+  async getRolePermissions(roleNames: readonly string[]): Promise<Record<string, string[]>> {
+    const names = [...new Set(roleNames)];
+    const out: Record<string, string[]> = {};
+    if (names.length === 0) return out;
+    const p = this.params();
+    const rows = (await this.dataSource.query(
+      `SELECT r.${this.col('name')} AS role, p.${this.col('name')} AS permission
+       FROM ${this.table('roles')} r
+       LEFT JOIN ${this.table('rolePermission')} rp ON rp.${this.col('roleId')} = r.${this.col('id')}
+       LEFT JOIN ${this.table('permissions')} p ON p.${this.col('id')} = rp.${this.col('permissionId')}
+       WHERE r.${this.col('name')} IN ${this.inList(p, names.length)}`,
+      names,
+    )) as Array<{ role: string; permission: string | null }>;
+    for (const row of rows) {
+      let list = out[row.role];
+      if (!list) {
+        list = [];
+        out[row.role] = list;
+      }
+      if (row.permission !== null) list.push(row.permission);
+    }
+    for (const list of Object.values(out)) list.sort();
+    return out;
+  }
+
   // --- user ↔ role ---
 
   /**
@@ -270,6 +367,25 @@ export class TypeOrmAuthzStore {
       params.push(scope.source);
     }
     await this.dataSource.query(sql, params);
+  }
+
+  /**
+   * Delete every role assignment (all tenants, all sources) and every DIRECT permission of the
+   * user — e.g. when the account is deleted. One transaction. Roles and permissions are kept.
+   */
+  async removeUser(user: UserRef): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    await this.dataSource.transaction(async (manager) => {
+      for (const table of ['userRole', 'userPermission'] as const) {
+        const p = this.params();
+        await manager.query(
+          `DELETE FROM ${this.table(table)} WHERE ${this.col('userType')} = ${p.next()} AND ${this.col(
+            'userId',
+          )} = ${p.next()}`,
+          [type, id],
+        );
+      }
+    });
   }
 
   // --- user ↔ permission (DIRECT grant, no role) ---
@@ -380,6 +496,70 @@ export class TypeOrmAuthzStore {
       source: row.source,
       tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
     }));
+  }
+
+  /**
+   * Raw role-assignment rows for admin listings — e.g. every member's roles in a tenant with
+   * their sources (`{ tenantId: 'acme' }`), or who holds a role (`{ role: 'admin' }`).
+   *
+   * `tenantId`: omitted = no tenant filter; `null` = GLOBAL assignments only; a string = exactly
+   * that tenant's scoped assignments (global ones are NOT included — list them with `null`).
+   * `role` accepts one name or a list; `user` and `source` narrow further. Ordered by
+   * `(userType, userId, role, source, tenantId)`.
+   */
+  async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
+    const p = this.params();
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.tenantId !== undefined) {
+      where.push(`ur.${this.col('tenantId')} = ${p.next()}`);
+      params.push(filter.tenantId ?? GLOBAL_TENANT);
+    }
+    const roleNames = roleFilterNames(filter.role);
+    if (roleNames !== undefined) {
+      if (roleNames.length === 0) return [];
+      where.push(`r.${this.col('name')} IN ${this.inList(p, roleNames.length)}`);
+      params.push(...roleNames);
+    }
+    if (filter.user !== undefined) {
+      const { type, id } = normalizeUserRef(filter.user);
+      where.push(
+        `ur.${this.col('userType')} = ${p.next()}`,
+        `ur.${this.col('userId')} = ${p.next()}`,
+      );
+      params.push(type, id);
+    }
+    if (filter.source !== undefined) {
+      where.push(`ur.${this.col('source')} = ${p.next()}`);
+      params.push(filter.source);
+    }
+    const rows = (await this.dataSource.query(
+      `SELECT ur.${this.col('userType')} AS ${this.col('userType')}, ur.${this.col(
+        'userId',
+      )} AS ${this.col('userId')}, r.${this.col('name')} AS role, ur.${this.col(
+        'source',
+      )} AS source, ur.${this.col('tenantId')} AS ${this.col('tenantId')}
+       FROM ${this.table('userRole')} ur
+       JOIN ${this.table('roles')} r ON r.${this.col('id')} = ur.${this.col('roleId')}${
+         where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''
+       }`,
+      params,
+    )) as Array<{
+      userType: string;
+      userId: string;
+      role: string;
+      source: string;
+      tenantId: string;
+    }>;
+    return rows
+      .map((row) => ({
+        userType: row.userType,
+        userId: String(row.userId),
+        role: row.role,
+        source: row.source,
+        tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
+      }))
+      .sort(compareUserRoleAssignments);
   }
 
   /**

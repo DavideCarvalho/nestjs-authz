@@ -10,7 +10,12 @@ export {
 } from './entities.js';
 export { createAuthzTables, ensureAuthzSchema } from './schema.js';
 export { TypeOrmAuthzStore } from './typeorm-authz.store.js';
-export type { RoleAssignment, UserAuthz } from './typeorm-authz.store.js';
+export type {
+  RoleAssignment,
+  RoleAssignmentFilter,
+  UserAuthz,
+  UserRoleAssignment,
+} from './typeorm-authz.store.js';
 export {
   AUTHZ_RBAC_OPTIONS,
   AUTHZ_RBAC_STORE,

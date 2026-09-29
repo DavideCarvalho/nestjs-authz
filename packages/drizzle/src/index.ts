@@ -7,7 +7,12 @@ export {
 } from './schema.js';
 export type { AuthzTables } from './schema.js';
 export { DrizzleAuthzStore } from './drizzle-authz.store.js';
-export type { RoleAssignment, UserAuthz } from './drizzle-authz.store.js';
+export type {
+  RoleAssignment,
+  RoleAssignmentFilter,
+  UserAuthz,
+  UserRoleAssignment,
+} from './drizzle-authz.store.js';
 export {
   AUTHZ_RBAC_OPTIONS,
   AUTHZ_RBAC_STORE,

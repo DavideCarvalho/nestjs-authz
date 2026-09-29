@@ -25,8 +25,10 @@ export { authzSchemaSql, ensureAuthzSchema } from './schema.js';
 export { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';
 export type {
   RoleAssignment,
+  RoleAssignmentFilter,
   RoleSourceOptions,
   UserAuthz,
+  UserRoleAssignment,
 } from './mikro-orm-authz.store.js';
 export {
   AUTHZ_RBAC_OPTIONS,

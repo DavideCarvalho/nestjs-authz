@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
+  type RoleAssignmentFilter,
   type UserAuthz,
   type UserRef,
+  type UserRoleAssignment,
+  compareUserRoleAssignments,
   normalizeUserRef,
+  roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import { type SQL, and, eq, inArray, sql } from 'drizzle-orm';
 import { type AuthzTables, GLOBAL_TENANT, authzSchemaDdl, createAuthzTables } from './schema.js';
@@ -17,7 +21,7 @@ import type {
 
 // Re-exported so `@dudousxd/nestjs-authz-drizzle`'s public `UserAuthz` keeps the same import
 // path; canonical definition lives in core's store-kit.
-export type { RoleAssignment, UserAuthz };
+export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /**
  * Drizzle-backed RBAC store (Postgres). A plain POJO that receives the app's Drizzle database in
@@ -136,6 +140,78 @@ export class DrizzleAuthzStore {
       .where(and(eq(rolePermission.roleId, roleId), eq(rolePermission.permissionId, permissionId)));
   }
 
+  /**
+   * Delete a role together with its role→permission links and EVERY user assignment of it (all
+   * tenants, all sources), in one transaction. Returns whether the role existed. The permissions
+   * themselves are kept (other roles or direct grants may use them).
+   */
+  async deleteRole(roleName: string): Promise<boolean> {
+    const { roles, rolePermission, userRole } = this.tables;
+    return this.db.transaction(async (tx) => {
+      const rows = await tx.select({ id: roles.id }).from(roles).where(eq(roles.name, roleName));
+      const roleId = rows[0]?.id;
+      if (!roleId) return false;
+      await tx.delete(userRole).where(eq(userRole.roleId, roleId));
+      await tx.delete(rolePermission).where(eq(rolePermission.roleId, roleId));
+      await tx.delete(roles).where(eq(roles.id, roleId));
+      return true;
+    });
+  }
+
+  /**
+   * REPLACE the role's permission set with exactly `permissionNames` (spatie's
+   * `syncPermissions`): links not in the list are removed, missing ones added. The role and the
+   * permissions are created by name when missing. Runs in one transaction (or inside the
+   * caller's, when the store was built with `tx`). An empty list leaves the role with no
+   * permissions.
+   */
+  async syncRolePermissions(roleName: string, permissionNames: readonly string[]): Promise<void> {
+    const { rolePermission } = this.tables;
+    await this.db.transaction(async (tx) => {
+      const store = this.withDb(tx);
+      const roleId = await store.createRole(roleName);
+      const permissionIds: string[] = [];
+      for (const name of new Set(permissionNames)) {
+        permissionIds.push(await store.createPermission(name));
+      }
+      await tx.delete(rolePermission).where(eq(rolePermission.roleId, roleId));
+      if (permissionIds.length > 0) {
+        await tx
+          .insert(rolePermission)
+          .values(permissionIds.map((permissionId) => ({ roleId, permissionId })))
+          .onConflictDoNothing();
+      }
+    });
+  }
+
+  /**
+   * The permission names of each named role, in one query. Every EXISTING requested role is a
+   * key (mapped to `[]` when it has no permissions); roles that don't exist are ABSENT from the
+   * result. Names are sorted.
+   */
+  async getRolePermissions(roleNames: readonly string[]): Promise<Record<string, string[]>> {
+    const names = [...new Set(roleNames)];
+    const out: Record<string, string[]> = {};
+    if (names.length === 0) return out;
+    const { roles, permissions, rolePermission } = this.tables;
+    const rows = await this.db
+      .select({ role: roles.name, permission: permissions.name })
+      .from(roles)
+      .leftJoin(rolePermission, eq(rolePermission.roleId, roles.id))
+      .leftJoin(permissions, eq(permissions.id, rolePermission.permissionId))
+      .where(inArray(roles.name, names));
+    for (const row of rows) {
+      let list = out[row.role];
+      if (!list) {
+        list = [];
+        out[row.role] = list;
+      }
+      if (row.permission !== null) list.push(row.permission);
+    }
+    for (const list of Object.values(out)) list.sort();
+    return out;
+  }
+
   // --- user ↔ role ---
 
   /**
@@ -221,6 +297,21 @@ export class DrizzleAuthzStore {
           scope?.source !== undefined ? eq(userRole.source, scope.source) : undefined,
         ),
       );
+  }
+
+  /**
+   * Delete every role assignment (all tenants, all sources) and every DIRECT permission of the
+   * user — e.g. when the account is deleted. One transaction. Roles and permissions are kept.
+   */
+  async removeUser(user: UserRef): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    const { userRole, userPermission } = this.tables;
+    await this.db.transaction(async (tx) => {
+      await tx.delete(userRole).where(and(eq(userRole.userType, type), eq(userRole.userId, id)));
+      await tx
+        .delete(userPermission)
+        .where(and(eq(userPermission.userType, type), eq(userPermission.userId, id)));
+    });
   }
 
   // --- user ↔ permission (DIRECT grant, no role) ---
@@ -309,6 +400,53 @@ export class DrizzleAuthzStore {
       source: row.source,
       tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
     }));
+  }
+
+  /**
+   * Raw role-assignment rows for admin listings — e.g. every member's roles in a tenant with
+   * their sources (`{ tenantId: 'acme' }`), or who holds a role (`{ role: 'admin' }`).
+   *
+   * `tenantId`: omitted = no tenant filter; `null` = GLOBAL assignments only; a string = exactly
+   * that tenant's scoped assignments (global ones are NOT included — list them with `null`).
+   * `role` accepts one name or a list; `user` and `source` narrow further. Ordered by
+   * `(userType, userId, role, source, tenantId)`.
+   */
+  async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
+    const { roles, userRole } = this.tables;
+    const conditions: SQL[] = [];
+    if (filter.tenantId !== undefined) {
+      conditions.push(eq(userRole.tenantId, filter.tenantId ?? GLOBAL_TENANT));
+    }
+    const roleNames = roleFilterNames(filter.role);
+    if (roleNames !== undefined) {
+      if (roleNames.length === 0) return [];
+      conditions.push(inArray(roles.name, roleNames));
+    }
+    if (filter.user !== undefined) {
+      const { type, id } = normalizeUserRef(filter.user);
+      conditions.push(eq(userRole.userType, type), eq(userRole.userId, id));
+    }
+    if (filter.source !== undefined) conditions.push(eq(userRole.source, filter.source));
+    const rows = await this.db
+      .select({
+        userType: userRole.userType,
+        userId: userRole.userId,
+        role: roles.name,
+        source: userRole.source,
+        tenantId: userRole.tenantId,
+      })
+      .from(userRole)
+      .innerJoin(roles, eq(roles.id, userRole.roleId))
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
+    return rows
+      .map((row) => ({
+        userType: row.userType,
+        userId: row.userId,
+        role: row.role,
+        source: row.source,
+        tenantId: row.tenantId === GLOBAL_TENANT ? null : row.tenantId,
+      }))
+      .sort(compareUserRoleAssignments);
   }
 
   /**

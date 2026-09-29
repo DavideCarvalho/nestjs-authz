@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
+  type RoleAssignmentFilter,
   type UserAuthz,
   type UserRef,
+  type UserRoleAssignment,
+  compareUserRoleAssignments,
   normalizeUserRef,
+  roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import {
   PRISMA_AUTHZ_STORE_OPTIONS,
@@ -15,7 +19,7 @@ import {
 
 // Re-exported so `@dudousxd/nestjs-authz-prisma`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { RoleAssignment, UserAuthz };
+export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
 export interface RoleSourceOptions {
@@ -135,6 +139,82 @@ export class PrismaAuthzStore {
     await this.client.rolePermission.deleteMany({ where: { roleId, permissionId } });
   }
 
+  /** Run `fn` in an interactive transaction when the client has `$transaction`, else directly. */
+  private async inTransaction<T>(fn: (client: PrismaAuthzClientLike) => Promise<T>): Promise<T> {
+    if (typeof this.client.$transaction === 'function') {
+      return (await this.client.$transaction((tx: PrismaAuthzClientLike) => fn(tx))) as T;
+    }
+    return fn(this.client);
+  }
+
+  /**
+   * Delete a role together with its role→permission links and EVERY user assignment of it (all
+   * sources). Returns whether the role existed. The permissions themselves are kept. Atomic when
+   * the client has `$transaction`.
+   */
+  async deleteRole(roleName: string): Promise<boolean> {
+    return this.inTransaction(async (client) => {
+      const role = await client.role.findFirst({ where: { name: roleName } });
+      const roleId = role?.id as string | undefined;
+      if (!roleId) return false;
+      await client.userRole.deleteMany({ where: { roleId } });
+      await client.rolePermission.deleteMany({ where: { roleId } });
+      await client.role.deleteMany({ where: { id: roleId } });
+      return true;
+    });
+  }
+
+  /**
+   * REPLACE the role's permission set with exactly `permissionNames` (spatie's
+   * `syncPermissions`): links not in the list are removed, missing ones added. The role and the
+   * permissions are created by name when missing (idempotently, before the swap); the delete +
+   * re-insert of the links is atomic when the client has `$transaction`. An empty list leaves
+   * the role with no permissions.
+   */
+  async syncRolePermissions(roleName: string, permissionNames: readonly string[]): Promise<void> {
+    const roleId = await this.createRole(roleName);
+    const permissionIds: string[] = [];
+    for (const name of new Set(permissionNames)) {
+      permissionIds.push(await this.createPermission(name));
+    }
+    await this.inTransaction(async (client) => {
+      await client.rolePermission.deleteMany({ where: { roleId } });
+      for (const permissionId of permissionIds) {
+        await client.rolePermission.create({ data: { roleId, permissionId } });
+      }
+    });
+  }
+
+  /**
+   * The permission names of each named role, in a fixed number of queries (three, whatever the
+   * number of roles — no N+1). Every EXISTING requested role is a key (mapped to `[]` when it
+   * has no permissions); roles that don't exist are ABSENT from the result. Names are sorted.
+   */
+  async getRolePermissions(roleNames: readonly string[]): Promise<Record<string, string[]>> {
+    const names = [...new Set(roleNames)];
+    const out: Record<string, string[]> = {};
+    if (names.length === 0) return out;
+    const roles = await this.client.role.findMany({ where: { name: { in: names } } });
+    if (roles.length === 0) return out;
+    const nameByRoleId = new Map(roles.map((r) => [r.id as string, r.name as string]));
+    for (const name of nameByRoleId.values()) out[name] = [];
+    const links = await this.client.rolePermission.findMany({
+      where: { roleId: { in: [...nameByRoleId.keys()] } },
+    });
+    if (links.length === 0) return out;
+    const permissions = await this.client.permission.findMany({
+      where: { id: { in: [...new Set(links.map((l) => l.permissionId as string))] } },
+    });
+    const permissionName = new Map(permissions.map((p) => [p.id as string, p.name as string]));
+    for (const link of links) {
+      const role = nameByRoleId.get(link.roleId as string);
+      const permission = permissionName.get(link.permissionId as string);
+      if (role !== undefined && permission !== undefined) out[role]?.push(permission);
+    }
+    for (const list of Object.values(out)) list.sort();
+    return out;
+  }
+
   // --- user ↔ role ---
 
   /**
@@ -188,11 +268,7 @@ export class PrismaAuthzStore {
         await client.userRole.create({ data: { userType: type, userId: id, roleId, ...source } });
       }
     };
-    if (typeof this.client.$transaction === 'function') {
-      await this.client.$transaction((tx: PrismaAuthzClientLike) => replace(tx));
-    } else {
-      await replace(this.client);
-    }
+    await this.inTransaction(replace);
   }
 
   /** Every role assignment of a user, one entry per `(role, source)`. */
@@ -214,6 +290,61 @@ export class PrismaAuthzStore {
         tenantId: null,
       }))
       .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
+  }
+
+  /**
+   * Raw role-assignment rows for admin listings — e.g. who holds a role (`{ role: 'admin' }`) or
+   * a user's assignments with their sources (`{ user }`). `role` accepts one name or a list;
+   * `user` and `source` narrow further. Ordered by `(userType, userId, role, source)`.
+   *
+   * This adapter has no tenant-scoped assignments — every row is global (`tenantId: null`). So
+   * `tenantId: undefined` or `null` lists everything, and a tenant id string matches nothing.
+   * Without `roleSources: true` every row is `'manual'`, so another `source` matches nothing.
+   */
+  async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
+    if (typeof filter.tenantId === 'string') return [];
+    const where: Record<string, unknown> = {};
+    if (filter.source !== undefined) {
+      if (this.options?.roleSources) where.source = filter.source;
+      else if (filter.source !== DEFAULT_ROLE_SOURCE) return [];
+    }
+    const roleNames = roleFilterNames(filter.role);
+    if (roleNames !== undefined) {
+      if (roleNames.length === 0) return [];
+      const roles = await this.client.role.findMany({ where: { name: { in: roleNames } } });
+      if (roles.length === 0) return [];
+      where.roleId = { in: roles.map((r) => r.id as string) };
+    }
+    if (filter.user !== undefined) {
+      const { type, id } = normalizeUserRef(filter.user);
+      where.userType = type;
+      where.userId = id;
+    }
+    const assignments = await this.client.userRole.findMany({ where });
+    if (assignments.length === 0) return [];
+    const roles = await this.client.role.findMany({
+      where: { id: { in: [...new Set(assignments.map((a) => a.roleId as string))] } },
+    });
+    const nameById = new Map(roles.map((r) => [r.id as string, r.name as string]));
+    return assignments
+      .filter((a) => nameById.has(a.roleId as string))
+      .map((a) => ({
+        userType: a.userType as string,
+        userId: a.userId as string,
+        role: nameById.get(a.roleId as string) as string,
+        source: (a.source as string | undefined) ?? DEFAULT_ROLE_SOURCE,
+        tenantId: null,
+      }))
+      .sort(compareUserRoleAssignments);
+  }
+
+  /**
+   * Delete every role assignment of the user (all sources) — e.g. when the account is deleted.
+   * Roles and permissions are kept. (This adapter has no direct user permissions.)
+   */
+  async removeUser(user: UserRef): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    await this.client.userRole.deleteMany({ where: { userType: type, userId: id } });
   }
 
   // --- queries ---

@@ -62,6 +62,13 @@ await gate.forUser(user).allows('posts.publish'); // true via PERMISSION_PROVIDE
 await gate.forUser(user).hasRole('editor');        // true via ROLE_PROVIDER
 ```
 
+Admin-UI management lives on every adapter's store too (same semantics everywhere):
+`syncRolePermissions(role, names)` replaces a role's permission set, `getRolePermissions(roles)`
+returns `{ [role]: permissionNames }` (missing roles absent), `deleteRole(role)` removes the role
+with its links and assignments, `listRoleAssignments({ tenantId?, role?, user?, source? })` lists
+raw `{ userType, userId, role, source, tenantId }` rows (`tenantId: null` = global only, a string =
+that tenant's scoped rows only), and `removeUser(user)` drops all of a user's assignments.
+
 ## Core patterns
 
 ### A hand-rolled PermissionProvider

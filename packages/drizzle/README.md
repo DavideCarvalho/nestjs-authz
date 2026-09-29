@@ -162,6 +162,37 @@ ALTER TABLE "authz_user_role"
   ADD CONSTRAINT "authz_user_role_pkey" PRIMARY KEY ("userType","userId","roleId","tenantId","source");
 ```
 
+## Admin management
+
+Operations for an admin UI (role editor, member list, account deletion):
+
+```ts
+// Replace a role's permissions with exactly this set (spatie's syncPermissions). Creates missing
+// roles/permissions by name. One transaction.
+await store.syncRolePermissions('editor', ['posts.view', 'posts.edit']);
+
+// Each role's permission names in one query. Existing roles are keys (even with no permissions);
+// roles that don't exist are absent.
+await store.getRolePermissions(['editor', 'viewer']); // { editor: ['posts.edit', 'posts.view'], viewer: [] }
+
+// Delete a role, its permission links and every assignment of it (all tenants, all sources).
+// Returns false when the role didn't exist. Permissions are kept.
+await store.deleteRole('editor');
+
+// Raw assignment rows: { userType, userId, role, source, tenantId }[],
+// ordered by (userType, userId, role, source, tenantId).
+await store.listRoleAssignments({ tenantId: 'acme' });  // that tenant's scoped rows ONLY (no globals)
+await store.listRoleAssignments({ tenantId: null });    // global rows only
+await store.listRoleAssignments({ role: ['admin', 'owner'], source: 'sso' });
+await store.listRoleAssignments({ user: { type: 'user', id: 7 } }); // tenantId omitted = every tenant
+
+// Account deleted: drop every role assignment (all tenants/sources) and direct permission.
+await store.removeUser({ type: 'user', id: 7 });
+```
+
+These run inside the caller's transaction when the store is bound to one
+(`store.withDb(tx)`).
+
 ## Testing
 
 `pnpm test` runs every spec against an in-process Postgres (PGlite), so it needs no Docker.

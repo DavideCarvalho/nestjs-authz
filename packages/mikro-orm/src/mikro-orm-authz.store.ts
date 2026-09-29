@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
+  type RoleAssignmentFilter,
   type UserAuthz,
   type UserRef,
+  type UserRoleAssignment,
+  compareUserRoleAssignments,
   normalizeUserRef,
+  roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import type { EntityManager, MikroORM } from '@mikro-orm/core';
 import { PermissionEntity, RoleEntity, RolePermissionEntity, UserRoleEntity } from './entities.js';
@@ -12,7 +16,7 @@ import { ensureAuthzSchema } from './schema.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-mikro-orm`'s public `UserAuthz` keeps the
 // same import path; canonical definition lives in core's store-kit.
-export type { RoleAssignment, UserAuthz };
+export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
 export interface RoleSourceOptions {
@@ -119,6 +123,85 @@ export class MikroOrmAuthzStore {
     await this.em.fork().nativeDelete(RolePermissionEntity, { roleId, permissionId });
   }
 
+  /**
+   * Delete a role together with its role→permission links and EVERY user assignment of it (all
+   * sources), in one transaction. Returns whether the role existed. The permissions themselves
+   * are kept (other roles may use them).
+   */
+  async deleteRole(roleName: string): Promise<boolean> {
+    return this.em.fork().transactional(async (tx) => {
+      const role = await tx.findOne(RoleEntity, { name: roleName });
+      if (!role) return false;
+      await tx.nativeDelete(UserRoleEntity, { roleId: role.id });
+      await tx.nativeDelete(RolePermissionEntity, { roleId: role.id });
+      await tx.nativeDelete(RoleEntity, { id: role.id });
+      return true;
+    });
+  }
+
+  /**
+   * REPLACE the role's permission set with exactly `permissionNames` (spatie's
+   * `syncPermissions`): links not in the list are removed, missing ones added. The role and the
+   * permissions are created by name when missing (idempotently, before the swap); the delete +
+   * re-insert of the links is transactional. An empty list leaves the role with no permissions.
+   */
+  async syncRolePermissions(roleName: string, permissionNames: readonly string[]): Promise<void> {
+    const roleId = await this.createRole(roleName);
+    const permissionIds: string[] = [];
+    for (const name of new Set(permissionNames)) {
+      permissionIds.push(await this.createPermission(name));
+    }
+    await this.em.fork().transactional(async (tx) => {
+      await tx.nativeDelete(RolePermissionEntity, { roleId });
+      for (const permissionId of permissionIds) {
+        tx.create(RolePermissionEntity, { roleId, permissionId });
+      }
+      await tx.flush();
+    });
+  }
+
+  /**
+   * The permission names of each named role, in one query. Every EXISTING requested role is a
+   * key (mapped to `[]` when it has no permissions); roles that don't exist are ABSENT from the
+   * result. Names are sorted.
+   */
+  async getRolePermissions(roleNames: readonly string[]): Promise<Record<string, string[]>> {
+    const names = [...new Set(roleNames)];
+    const out: Record<string, string[]> = {};
+    if (names.length === 0) return out;
+    const em = this.em.fork();
+    const meta = em.getMetadata();
+    const role = meta.get(RoleEntity.name);
+    const perm = meta.get(PermissionEntity.name);
+    const rolePerm = meta.get(RolePermissionEntity.name);
+    const col = (m: typeof role, prop: string): string => {
+      const field = m.properties[prop]?.fieldNames?.[0];
+      if (!field) throw new Error(`Missing column metadata for ${m.className}.${prop}`);
+      return field;
+    };
+    // Identifiers come from entity metadata (trusted); role names are bound parameters.
+    const sql =
+      `select r.${col(role, 'name')} as role, p.${col(perm, 'name')} as permission ` +
+      `from ${role.tableName} r ` +
+      `left join ${rolePerm.tableName} rp on rp.${col(rolePerm, 'roleId')} = r.${col(role, 'id')} ` +
+      `left join ${perm.tableName} p on p.${col(perm, 'id')} = rp.${col(rolePerm, 'permissionId')} ` +
+      `where r.${col(role, 'name')} in (${names.map(() => '?').join(', ')})`;
+    const rows = (await em.getConnection().execute(sql, names)) as Array<{
+      role: string;
+      permission: string | null;
+    }>;
+    for (const row of rows) {
+      let list = out[row.role];
+      if (!list) {
+        list = [];
+        out[row.role] = list;
+      }
+      if (row.permission !== null && row.permission !== undefined) list.push(row.permission);
+    }
+    for (const list of Object.values(out)) list.sort();
+    return out;
+  }
+
   // --- user ↔ role ---
 
   /**
@@ -193,6 +276,58 @@ export class MikroOrmAuthzStore {
       .filter((a) => nameById.has(a.roleId))
       .map((a) => ({ role: nameById.get(a.roleId) as string, source: a.source, tenantId: null }))
       .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
+  }
+
+  /**
+   * Raw role-assignment rows for admin listings — e.g. who holds a role (`{ role: 'admin' }`) or
+   * a user's assignments with their sources (`{ user }`). `role` accepts one name or a list;
+   * `user` and `source` narrow further. Ordered by `(userType, userId, role, source)`.
+   *
+   * This adapter has no tenant-scoped assignments — every row is global (`tenantId: null`). So
+   * `tenantId: undefined` or `null` lists everything, and a tenant id string matches nothing.
+   */
+  async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
+    if (typeof filter.tenantId === 'string') return [];
+    const em = this.em.fork();
+    const where: Record<string, unknown> = {};
+    const roleNames = roleFilterNames(filter.role);
+    if (roleNames !== undefined) {
+      if (roleNames.length === 0) return [];
+      const roles = await em.find(RoleEntity, { name: { $in: roleNames } });
+      if (roles.length === 0) return [];
+      where.roleId = { $in: roles.map((r) => r.id) };
+    }
+    if (filter.user !== undefined) {
+      const { type, id } = normalizeUserRef(filter.user);
+      where.userType = type;
+      where.userId = id;
+    }
+    if (filter.source !== undefined) where.source = filter.source;
+    const assignments = await em.find(UserRoleEntity, where);
+    if (assignments.length === 0) return [];
+    const roles = await em.find(RoleEntity, {
+      id: { $in: [...new Set(assignments.map((a) => a.roleId))] },
+    });
+    const nameById = new Map(roles.map((r) => [r.id, r.name]));
+    return assignments
+      .filter((a) => nameById.has(a.roleId))
+      .map((a) => ({
+        userType: a.userType,
+        userId: a.userId,
+        role: nameById.get(a.roleId) as string,
+        source: a.source,
+        tenantId: null,
+      }))
+      .sort(compareUserRoleAssignments);
+  }
+
+  /**
+   * Delete every role assignment of the user (all sources) — e.g. when the account is deleted.
+   * Roles and permissions are kept. (This adapter has no direct user permissions.)
+   */
+  async removeUser(user: UserRef): Promise<void> {
+    const { type, id } = normalizeUserRef(user);
+    await this.em.fork().nativeDelete(UserRoleEntity, { userType: type, userId: id });
   }
 
   // --- queries ---

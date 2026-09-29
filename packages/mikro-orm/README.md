@@ -173,6 +173,36 @@ ALTER TABLE authz_user_role DROP PRIMARY KEY, ADD PRIMARY KEY (user_type, user_i
 -- SQLite: recreate the table with the 4-column key (SQLite cannot alter a primary key).
 ```
 
+## Admin management
+
+Operations for an admin UI (role editor, member list, account deletion):
+
+```ts
+// Replace a role's permissions with exactly this set (spatie's syncPermissions). Creates missing
+// roles/permissions by name; the link swap is transactional.
+await store.syncRolePermissions('editor', ['posts.view', 'posts.edit']);
+
+// Each role's permission names in one query. Existing roles are keys (even with no permissions);
+// roles that don't exist are absent.
+await store.getRolePermissions(['editor', 'viewer']); // { editor: ['posts.edit', 'posts.view'], viewer: [] }
+
+// Delete a role, its permission links and every assignment of it (all sources). Returns false
+// when the role didn't exist. Permissions are kept.
+await store.deleteRole('editor');
+
+// Raw assignment rows: { userType, userId, role, source, tenantId }[],
+// ordered by (userType, userId, role, source).
+await store.listRoleAssignments({ role: ['admin', 'owner'], source: 'sso' });
+await store.listRoleAssignments({ user: { type: 'user', id: 7 } });
+
+// Account deleted: drop every role assignment of the user (all sources).
+await store.removeUser({ type: 'user', id: 7 });
+```
+
+This adapter has no tenant-scoped assignments, so every row has `tenantId: null`:
+`listRoleAssignments({ tenantId: null })` lists everything and a tenant id string matches
+nothing.
+
 ## License
 
 MIT

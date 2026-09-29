@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-mikro-orm-v7-integration",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Integration suite pinning MikroORM 7 to verify @dudousxd/nestjs-authz-mikro-orm runs on v7 (peer ^6 || ^7).",
   "license": "MIT",

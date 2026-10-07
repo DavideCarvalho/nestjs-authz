@@ -1,0 +1,15 @@
+{
+  "title": "Authz",
+  "pages": [
+    "index",
+    "getting-started",
+    "policies",
+    "gates",
+    "enforcement",
+    "current-user",
+    "resource-resolution",
+    "rbac",
+    "external-engines",
+    "ecosystem"
+  ]
+}

@@ -96,7 +96,10 @@ The core runs segment-based wildcard matching against `getPermissions`: a grante
 exact-match contract for providers that do not list grants.
 
 Within one request (nestjs-context) the Gate fetches `getPermissions` and
-`RoleProvider.getRoles` once per user and reuses them for every check; a grant made
+`RoleProvider.getRoles` once per user and reuses them for every check (keyed by the
+row the user names — its class or `type` plus `id`, so ORMs without an identity map
+share entries; a plain object without `type` is keyed by identity, so two users that
+only share an `id` never share an entry); a grant made
 mid-request applies from the next request. When the set misses, the Gate still calls
 `hasPermission` (it may grant on the resource). Set `readonly exhaustivePermissions = true`
 when `getPermissions` already lists everything `hasPermission` can grant, so a miss is

@@ -98,7 +98,7 @@ Once wired, the Gate consults persisted RBAC:
 await store.givePermissionToRole('editor', 'posts.publish');
 await store.assignRole({ type: 'user', id: 7 }, 'editor');
 
-gate.forUser(user).allows('posts.publish'); // true (PERMISSION_PROVIDER seam)
+gate.forUser(user).allows('posts.publish'); // true (PERMISSION_PROVIDER seam, wildcards supported)
 gate.forUser(user).hasRole('editor');       // true (ROLE_PROVIDER seam)
 ```
 

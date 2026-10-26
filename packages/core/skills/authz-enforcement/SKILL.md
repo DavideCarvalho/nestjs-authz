@@ -75,7 +75,9 @@ await this.gate.forUser(someUser).authorize('update', post);
 ```
 
 `allowsMany` batch-checks one user in a single pass (resolves the user once, shares a
-permission cache — kills the N+1 on a list page):
+permission cache — kills the N+1 on a list page). Inside a nestjs-context request, plain
+`allows`/`authorize`/`hasRole` calls also share one `resolveUser`, one permission fetch and
+one role fetch per user for the whole request:
 
 ```ts
 const results = await this.gate.allowsMany([

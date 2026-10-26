@@ -143,6 +143,70 @@ describe('per-request memoization', () => {
     expect(getPermissions).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps plain-object users without a type apart even when their ids match', async () => {
+    const getPermissions = vi.fn((user: unknown) =>
+      (user as { kind: string }).kind === 'service' ? ['*'] : [],
+    );
+    const getRoles = vi.fn((user: unknown) =>
+      (user as { kind: string }).kind === 'service' ? ['robot'] : [],
+    );
+    const provider: PermissionProvider = {
+      hasPermission: () => false,
+      getPermissions,
+      exhaustivePermissions: true,
+    };
+    const gate = new Gate(
+      new PolicyRegistry(),
+      {},
+      requestContext(undefined),
+      undefined,
+      provider,
+      { getRoles },
+    );
+    gate.define('posts.update', () => false);
+    const human = { id: 1, kind: 'human' };
+    const service = { id: 1, kind: 'service' };
+
+    expect(await gate.forUser(service).allows('posts.update')).toBe(true);
+    expect(await gate.forUser(human).allows('posts.update')).toBe(false);
+    expect(await gate.forUser(service).hasRole('robot')).toBe(true);
+    expect(await gate.forUser(human).hasRole('robot')).toBe(false);
+  });
+
+  it('re-loaded entity instances of one class share an entry', async () => {
+    class Account {
+      constructor(public id: number) {}
+    }
+    const getPermissions = vi.fn(() => ['posts.*']);
+    const provider: PermissionProvider = { hasPermission: () => false, getPermissions };
+    const gate = new Gate(new PolicyRegistry(), {}, requestContext(undefined), undefined, provider);
+
+    for (let i = 0; i < 5; i++) {
+      expect(await gate.forUser(new Account(3)).allows('posts.update')).toBe(true);
+    }
+    expect(getPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  it('two classes that share a name never share an entry', async () => {
+    const make = () =>
+      class User {
+        constructor(public id: number) {}
+      };
+    const A = make();
+    const B = make();
+    const getPermissions = vi.fn((user: unknown) => (user instanceof A ? ['*'] : []));
+    const provider: PermissionProvider = {
+      hasPermission: () => false,
+      getPermissions,
+      exhaustivePermissions: true,
+    };
+    const gate = new Gate(new PolicyRegistry(), {}, requestContext(undefined), undefined, provider);
+    gate.define('posts.update', () => false);
+
+    expect(await gate.forUser(new A(1)).allows('posts.update')).toBe(true);
+    expect(await gate.forUser(new B(1)).allows('posts.update')).toBe(false);
+  });
+
   it('fetches provider roles once per request across hasRole / hasAnyRole', async () => {
     const getRoles = vi.fn(() => ['editor']);
     const roleProvider: RoleProvider = { getRoles };

@@ -106,7 +106,7 @@ If a check isn't satisfied by the cached set, what happens next depends on `exha
 - **Unset.** The gate still calls `hasPermission(user, ability, resource)`, because it may grant more than the set lists (for example, by looking at the resource). Leave the flag unset on a custom provider that works this way.
 
 <Callout type="warn">
-Entries are cached for the request, so a role or permission granted or revoked in the middle of a request takes effect on the **next** request. Checks later in the same request still see the set that was fetched first. Entries are keyed by the user's class, `type` and `id`, so copies of the same user loaded separately share one entry.
+Entries are cached for the request, so a role or permission granted or revoked in the middle of a request takes effect on the **next** request. Checks later in the same request still see the set that was fetched first. Copies of the same user loaded separately share one entry when the user names its row: an `id` plus either a string `type` or a class of its own (an ORM entity). A plain object without `type` (`{ id: 1 }`) is keyed by object identity, so a human user and a service account that happen to share an id never share permissions or roles.
 </Callout>
 
 Both seams are optional and token-based, so the engine consults them when present and falls back cleanly when absent — the same "degrade gracefully" pattern authz uses for [the current-user accessor](/docs/authz/current-user). You rarely register these by hand; an [RBAC adapter](#adding-persistence) provides both:

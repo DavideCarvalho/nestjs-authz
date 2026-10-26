@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { permissionMatches, permissionSatisfied } from '../src/permission-matcher.js';
+import {
+  CompiledPermissions,
+  permissionMatches,
+  permissionSatisfied,
+} from '../src/permission-matcher.js';
 
 /**
  * Laravel/spatie-style wildcard permission matching. A GRANTED permission may
@@ -64,5 +68,78 @@ describe('permissionSatisfied (granted set vs required)', () => {
 
   it('empty grant set satisfies nothing', () => {
     expect(permissionSatisfied([], 'posts.update')).toBe(false);
+  });
+});
+
+describe('CompiledPermissions (precompiled granted set)', () => {
+  const edgeGrants = [
+    '*',
+    'posts.*',
+    'posts.*.draft',
+    '*.update',
+    'posts.update',
+    'posts',
+    'post*',
+    'posts.**',
+    '',
+    '.',
+    'posts.',
+    '.*',
+    '*.*',
+    'a.*.*',
+  ];
+  const edgeChecks = [
+    'posts',
+    'posts.update',
+    'posts.update.draft',
+    'posts.edit.draft',
+    'comments.update',
+    'post*',
+    'posts.*',
+    'posts.**',
+    '*',
+    '',
+    '.',
+    'posts.',
+    'a',
+    'a.b',
+    'a.b.c',
+    'a.b.c.d',
+  ];
+
+  it('agrees with permissionSatisfied on every single-grant edge case', () => {
+    for (const g of edgeGrants) {
+      const compiled = new CompiledPermissions([g]);
+      for (const r of edgeChecks) {
+        expect(compiled.satisfies(r), `${JSON.stringify(g)} vs ${JSON.stringify(r)}`).toBe(
+          permissionSatisfied([g], r),
+        );
+      }
+    }
+  });
+
+  it('agrees with permissionSatisfied on random grant sets', () => {
+    let seed = 42;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    const segments = ['a', 'b', 'c', '*', '', 'a*'];
+    const name = () =>
+      Array.from({ length: 1 + rand(4) }, () => segments[rand(segments.length)]).join('.');
+    for (let round = 0; round < 500; round++) {
+      const granted = Array.from({ length: rand(6) }, name);
+      const compiled = new CompiledPermissions(granted);
+      for (let i = 0; i < 20; i++) {
+        const required = name();
+        expect(compiled.satisfies(required), `${JSON.stringify(granted)} vs ${required}`).toBe(
+          permissionSatisfied(granted, required),
+        );
+      }
+    }
+  });
+
+  it('exposes the deduped granted set', () => {
+    expect([...new CompiledPermissions(['a', 'b.*', 'a']).granted]).toEqual(['a', 'b.*']);
   });
 });

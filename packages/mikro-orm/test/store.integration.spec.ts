@@ -1,8 +1,8 @@
 import 'reflect-metadata';
-import { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { CONTEXT_ACCESSOR, Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
 import { MikroORM } from '@mikro-orm/better-sqlite';
 import { Test } from '@nestjs/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
 import { AUTHZ_ENTITIES, RoleEntity } from '../src/entities.js';
 import { MikroOrmAuthzStore } from '../src/mikro-orm-authz.store.js';
@@ -113,6 +113,61 @@ describe('MikroOrmAuthzStore (integration, sqlite)', () => {
     expect(await gate.forUser({ type: 'user', id: 42 }).hasAnyRole(['admin', 'editor'])).toBe(true);
     // A user without the role is denied.
     expect(await gate.forUser({ type: 'user', id: 99 }).hasRole('editor')).toBe(false);
+
+    await moduleRef.close();
+  });
+
+  it('one request shares a single permission and role fetch across every check', async () => {
+    await store.givePermissionToRole('editor', 'posts.publish');
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+
+    const requestStore: Record<string, unknown> = {};
+    const context = {
+      traceId: () => undefined,
+      tenantId: () => undefined,
+      userRef: () => ({ type: 'user', id: 42 }),
+      get: () => requestStore,
+    };
+    const moduleRef = await Test.createTestingModule({
+      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
+      providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: context }],
+    }).compile();
+    await moduleRef.init();
+
+    const gate = moduleRef.get(Gate);
+    gate.define('posts.delete', () => false);
+    const getPermissions = vi.spyOn(store, 'getPermissionsForUser');
+    const hasPermission = vi.spyOn(store, 'userHasPermission');
+    const getRoles = vi.spyOn(store, 'getRolesForUser');
+
+    for (let i = 0; i < 25; i++) {
+      expect(await gate.allows('posts.publish')).toBe(true);
+      expect(await gate.allows('posts.delete')).toBe(false);
+      expect(await gate.hasRole('editor')).toBe(true);
+    }
+
+    expect(getPermissions).toHaveBeenCalledTimes(1);
+    expect(hasPermission).not.toHaveBeenCalled();
+    expect(getRoles).toHaveBeenCalledTimes(1);
+
+    await moduleRef.close();
+  });
+
+  it('Gate.allows honors persisted WILDCARD grants (posts.* → posts.update)', async () => {
+    await store.givePermissionToRole('editor', 'posts.*');
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
+      providers: [PolicyRegistry, Gate],
+    }).compile();
+    await moduleRef.init();
+
+    const gate = moduleRef.get(Gate);
+    expect(await gate.forUser({ type: 'user', id: 42 }).allows('posts.update')).toBe(true);
+    await expect(
+      gate.forUser({ type: 'user', id: 42 }).allows('comments.update'),
+    ).rejects.toThrow();
 
     await moduleRef.close();
   });

@@ -1,25 +1,58 @@
-import { permissionSatisfied } from './permission-matcher.js';
+import { CompiledPermissions } from './permission-matcher.js';
 import type { PermissionProvider } from './permission-provider.js';
+import type { RoleProvider } from './role-provider.js';
 import type { User } from './types.js';
 
 /**
- * A memo over a {@link PermissionProvider}'s `getPermissions(user)` so a user's
- * granted-permission set is fetched AT MOST ONCE per logical scope (a single
- * `allowsMany` batch, or — when wired to nestjs-context — a single HTTP request).
+ * The identity a cache entry is keyed by. A user object carrying a string/number
+ * `id` keys by its class, `type` and `id`, so two separately-loaded copies of the
+ * same row (an ORM without an identity map, or a re-hydrated user) share one entry.
+ * Anything else (a bare id, an object without an id) keys by value/identity.
+ */
+function userCacheKey(user: User): unknown {
+  if (user === null || typeof user !== 'object') return user;
+  const { type, id } = user as { type?: unknown; id?: unknown };
+  if (typeof id !== 'string' && typeof id !== 'number') return user;
+  const kind = (user as object).constructor?.name ?? '';
+  return `${kind}:${typeof type === 'string' ? type : ''}:${typeof id}:${id}`;
+}
+
+/**
+ * A memo over a {@link PermissionProvider}'s `getPermissions(user)` and a
+ * {@link RoleProvider}'s `getRoles(user)` so each is fetched AT MOST ONCE per
+ * logical scope (a single `allowsMany` batch, or — when wired to nestjs-context —
+ * a single HTTP request).
  *
  * Without it, every `gate.allows(...)` re-fetches the set (an N+1 within a list
- * page, since each card runs its own check). The cache keys by the resolved
- * `user` identity so two checks for the SAME user share one fetch while a
- * different user still triggers its own.
+ * page, since each card runs its own check). Entries are keyed by
+ * {@link userCacheKey}, so checks for the SAME user share one fetch while a
+ * different user still triggers its own. The granted set is compiled once per
+ * entry, so each check is a hash lookup plus a scan of the wildcard grants only.
  *
- * Only the `getPermissions` (full-set, wildcard-matched) path is memoized — the
- * exact-match `hasPermission` fast path is left to the provider, which is free to
- * memoize internally. A provider WITHOUT `getPermissions` makes this a no-op.
+ * A grant or revocation made while the scope is alive is seen by the next scope
+ * (the next request), not by later checks in the same one.
  */
 export class PermissionCache {
-  // Keyed by the user object identity. `Map` (not WeakMap) because a batch/request
-  // cache is short-lived and we also accept primitive ids/refs as keys.
-  private readonly byUser = new Map<unknown, Promise<ReadonlySet<string> | undefined>>();
+  // `Map` (not WeakMap) because a batch/request cache is short-lived and keys are
+  // strings or primitive ids as often as objects.
+  private readonly byUser = new Map<unknown, Promise<CompiledPermissions | undefined>>();
+  private readonly rolesByUser = new Map<unknown, Promise<string[] | undefined>>();
+
+  private compiled(
+    provider: PermissionProvider,
+    user: User,
+  ): Promise<CompiledPermissions | undefined> | undefined {
+    if (typeof provider.getPermissions !== 'function') return undefined;
+    const key = userCacheKey(user);
+    const cached = this.byUser.get(key);
+    if (cached) return cached;
+    const pending = Promise.resolve(provider.getPermissions(user)).then((granted) =>
+      granted == null ? undefined : new CompiledPermissions(granted),
+    );
+    this.byUser.set(key, pending);
+    pending.catch(() => this.byUser.delete(key));
+    return pending;
+  }
 
   /**
    * Resolve the user's granted-permission set via the provider, memoized for the
@@ -31,14 +64,7 @@ export class PermissionCache {
     provider: PermissionProvider,
     user: User,
   ): Promise<ReadonlySet<string> | undefined> {
-    if (typeof provider.getPermissions !== 'function') return undefined;
-    const cached = this.byUser.get(user);
-    if (cached) return cached;
-    const pending = Promise.resolve(provider.getPermissions(user)).then((granted) =>
-      granted == null ? undefined : new Set(granted),
-    );
-    this.byUser.set(user, pending);
-    return pending;
+    return (await this.compiled(provider, user))?.granted;
   }
 
   /**
@@ -51,8 +77,17 @@ export class PermissionCache {
     user: User,
     ability: string,
   ): Promise<boolean | undefined> {
-    const set = await this.getPermissions(provider, user);
-    if (set === undefined) return undefined;
-    return permissionSatisfied(set, ability);
+    return (await this.compiled(provider, user))?.satisfies(ability);
+  }
+
+  /** The user's roles from `provider`, memoized for the cache's lifetime. */
+  getRoles(provider: RoleProvider, user: User): Promise<string[] | undefined> {
+    const key = userCacheKey(user);
+    const cached = this.rolesByUser.get(key);
+    if (cached) return cached;
+    const pending = Promise.resolve(provider.getRoles(user));
+    this.rolesByUser.set(key, pending);
+    pending.catch(() => this.rolesByUser.delete(key));
+    return pending;
   }
 }

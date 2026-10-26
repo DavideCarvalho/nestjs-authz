@@ -77,7 +77,7 @@ The hook signature is:
 resolveUser?: (ref: UserRef) => User | undefined | Promise<User | undefined>;
 ```
 
-This is the option most apps want: write your policies against your real entity, just as you would in Laravel. It costs one lookup per authorization pass (cache it in your repository/identity-map if that matters for your workload).
+This is the option most apps want: write your policies against your real entity, just as you would in Laravel. It costs one lookup per request: the gate memoizes the hydrated user on the request's context store (keyed by `type:id`), so a page that runs fifty checks still calls `resolveUser` once.
 
 <Callout type="info">
 A `resolveUser` that returns nullish (`undefined`/`null`) is treated as **"no user"** — the same deny path as an anonymous request. Use this to reject refs that no longer resolve to a live user (deleted accounts, revoked tokens).

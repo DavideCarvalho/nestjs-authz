@@ -29,6 +29,8 @@ import type { Resource, User } from './types.js';
  * (see `permission-matcher.ts`), so wildcard semantics work regardless of adapter
  * and without each adapter re-implementing the matching. `hasPermission` remains the
  * exact-match fast path (and the sole contract for providers that don't list grants).
+ * Within one request (nestjs-context) or one `allowsMany` batch, the set is fetched once
+ * per user.
  */
 export interface PermissionProvider {
   hasPermission(
@@ -44,4 +46,13 @@ export interface PermissionProvider {
    * `hasPermission` (e.g. for an anonymous/unmappable user).
    */
   getPermissions?(user: User): Iterable<string> | undefined | Promise<Iterable<string> | undefined>;
+  /**
+   * Optional: `true` when the set returned by {@link getPermissions} is everything
+   * {@link hasPermission} would ever grant, for any resource. The Gate then answers a
+   * check the set doesn't satisfy as "no grant" without calling `hasPermission`, so a
+   * request costs one `getPermissions` fetch no matter how many checks it runs. Leave it
+   * unset when `hasPermission` can grant beyond the listed set (e.g. it inspects the
+   * resource); the Gate then still calls `hasPermission` for those checks.
+   */
+  readonly exhaustivePermissions?: boolean;
 }

@@ -155,7 +155,9 @@ export interface AuthzModuleOptions {
    * `superAdmin: u => u.isAdmin` or `post.authorId === user.id` against a real
    * column will not see hydrated fields. Provide `resolveUser` to load the entity
    * (e.g. from your ORM) keyed by the ref. Returning `undefined` is treated as
-   * "no user" (deny path), identical to an anonymous request.
+   * "no user" (deny path), identical to an anonymous request. Within one request
+   * (nestjs-context store) the hook runs once per `type:id`; every later check
+   * reuses that result.
    *
    * Only affects the context path; `gate.forUser(entity)` always uses the value
    * you pass directly and never invokes this hook.

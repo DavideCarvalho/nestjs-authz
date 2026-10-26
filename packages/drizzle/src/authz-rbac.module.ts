@@ -115,6 +115,9 @@ export function defaultUserRefMapper(user: unknown): UserRef | undefined {
  */
 @Injectable()
 class RbacPermissionProvider implements PermissionProvider {
+  // `getPermissions` lists every grant `hasPermission` can find, for any resource.
+  readonly exhaustivePermissions = true;
+
   private readonly contextCache = {
     resolved: false,
     value: undefined as TenantContextAccessor | undefined,

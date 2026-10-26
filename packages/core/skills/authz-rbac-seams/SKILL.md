@@ -95,6 +95,13 @@ The core runs segment-based wildcard matching against `getPermissions`: a grante
 `posts.*` satisfies `posts.update`; `*` satisfies anything. `hasPermission` is the
 exact-match contract for providers that do not list grants.
 
+Within one request (nestjs-context) the Gate fetches `getPermissions` and
+`RoleProvider.getRoles` once per user and reuses them for every check; a grant made
+mid-request applies from the next request. When the set misses, the Gate still calls
+`hasPermission` (it may grant on the resource). Set `readonly exhaustivePermissions = true`
+when `getPermissions` already lists everything `hasPermission` can grant, so a miss is
+answered without another lookup; the ORM adapters' providers do.
+
 ### Zero-table role checks (no provider)
 
 `gate.hasRole` / `@Roles` work with **no** RBAC tables: the `defaultRoleResolver` reads

@@ -37,7 +37,11 @@ export type {
 } from './decision-provider.js';
 export { defaultRoleResolver } from './role-provider.js';
 export type { RoleProvider, RoleResolver } from './role-provider.js';
-export { permissionMatches, permissionSatisfied } from './permission-matcher.js';
+export {
+  CompiledPermissions,
+  permissionMatches,
+  permissionSatisfied,
+} from './permission-matcher.js';
 export {
   and,
   eq,

@@ -29,6 +29,7 @@ function defaultIdentity(user: User): string {
  * await expectCan(gate, { id: 1 }, 'posts.update'); // wildcard grant
  */
 export class FakePermissionProvider implements PermissionProvider {
+  readonly exhaustivePermissions = true;
   private readonly grants: Map<string, Set<string>>;
   private readonly identity: (user: User) => string;
 

@@ -100,6 +100,9 @@ type MaybeUser = User | typeof NO_USER;
  */
 const REQUEST_PERMISSION_CACHE = Symbol.for('@dudousxd/nestjs-authz:request-permission-cache');
 
+/** Key under which the per-request `resolveUser` results are stashed on the context store. */
+const REQUEST_USERS = Symbol.for('@dudousxd/nestjs-authz:request-users');
+
 /** A single item in a {@link Gate.allowsMany} batch. */
 export interface BatchAbility {
   ability: string;
@@ -252,6 +255,17 @@ export class Gate {
    * a transient cache (e.g. one per `allowsMany` batch) or no memoization.
    */
   private resolveRequestCache(): PermissionCache | undefined {
+    const store = this.requestStore();
+    if (!store) return undefined;
+    const existing = store[REQUEST_PERMISSION_CACHE];
+    if (existing instanceof PermissionCache) return existing;
+    const cache = new PermissionCache();
+    store[REQUEST_PERMISSION_CACHE] = cache;
+    return cache;
+  }
+
+  /** The nestjs-context store for the current request, or `undefined` when there is none. */
+  private requestStore(): Record<symbol, unknown> | undefined {
     const context = this.resolveContext();
     // `get()` is part of the ContextAccessor contract but a stub/partial accessor
     // may omit it (or it may throw outside a request scope) — degrade to "no
@@ -263,12 +277,7 @@ export class Gate {
     } catch {
       store = undefined;
     }
-    if (!store) return undefined;
-    const existing = (store as Record<symbol, unknown>)[REQUEST_PERMISSION_CACHE];
-    if (existing instanceof PermissionCache) return existing;
-    const cache = new PermissionCache();
-    (store as Record<symbol, unknown>)[REQUEST_PERMISSION_CACHE] = cache;
-    return cache;
+    return store as Record<symbol, unknown> | undefined;
   }
 
   /** Register an ad-hoc, model-less gate resolved by `ability` name. */
@@ -308,18 +317,35 @@ export class Gate {
   /**
    * Resolve the current user from the context accessor, or `NO_USER`.
    * When a `resolveUser` hook is configured, hydrate the full entity from the
-   * context's {@link UserRef}; a hook returning nullish maps to `NO_USER`.
+   * context's {@link UserRef}; a hook returning nullish maps to `NO_USER`. The
+   * hydrated user is memoized on the request's context store by `type:id`, so the
+   * hook runs once per request rather than once per check.
    */
   private async currentUser(): Promise<MaybeUser> {
     const context = this.resolveContext();
     if (!context) return NO_USER;
     const ref = context.userRef();
     if (ref === undefined) return NO_USER;
-    if (this.resolveUser) {
-      const hydrated = await this.resolveUser(ref as UserRef);
+    const resolveUser = this.resolveUser;
+    if (!resolveUser) return ref;
+    const hydrate = async (): Promise<MaybeUser> => {
+      const hydrated = await resolveUser(ref as UserRef);
       return hydrated == null ? NO_USER : hydrated;
+    };
+    const store = this.requestStore();
+    if (!store) return hydrate();
+    let users = store[REQUEST_USERS] as Map<string, Promise<MaybeUser>> | undefined;
+    if (!(users instanceof Map)) {
+      users = new Map();
+      store[REQUEST_USERS] = users;
     }
-    return ref;
+    const key = `${ref.type}:${typeof ref.id}:${ref.id}`;
+    const cached = users.get(key);
+    if (cached) return cached;
+    const pending = hydrate();
+    users.set(key, pending);
+    pending.catch(() => users.delete(key));
+    return pending;
   }
 
   // --- public API (operates on the current/context user) ---
@@ -564,8 +590,10 @@ export class Gate {
    * Grant-only: a `false`/nullish result is "no grant", never a deny. When the provider lists the
    * user's granted permissions, segment-based wildcard matching runs in the core (a granted
    * `posts.*` satisfies `posts.update`, `*` satisfies anything) regardless of adapter; a nullish
-   * list defers to the exact-match `hasPermission`. The granted set is fetched through `cache` when
-   * one is supplied, else via a direct fetch.
+   * list defers to the exact-match `hasPermission`. A set the provider marks
+   * {@link PermissionProvider.exhaustivePermissions} answers the check on its own; otherwise an
+   * unsatisfied set still defers to `hasPermission`. The granted set is fetched through `cache`
+   * when one is supplied, else via a direct fetch.
    */
   private async permissionProviderGrants(
     user: User,
@@ -583,6 +611,7 @@ export class Gate {
             return granted == null ? undefined : permissionSatisfied(granted, ability);
           })();
       if (satisfied === true) return true;
+      if (satisfied === false && provider.exhaustivePermissions === true) return false;
     }
     return (await provider.hasPermission(user, ability, resource)) === true;
   }
@@ -596,13 +625,16 @@ export class Gate {
    */
   private async checkRoles(maybeUser: MaybeUser, roles: string[]): Promise<boolean> {
     if (maybeUser === NO_USER || roles.length === 0) return false;
-    const userRoles = await this.rolesOf(maybeUser);
+    const userRoles = await this.rolesOf(maybeUser, this.resolveRequestCache());
     if (userRoles.size === 0) return false;
     return roles.some((r) => userRoles.has(r));
   }
 
-  /** The current user's effective role names (resolver ∪ provider). */
-  private async rolesOf(user: User): Promise<Set<string>> {
+  /**
+   * The current user's effective role names (resolver ∪ provider). The provider's
+   * roles are fetched through `cache` when one is supplied.
+   */
+  private async rolesOf(user: User, cache: PermissionCache | undefined): Promise<Set<string>> {
     const out = new Set<string>();
     const fromResolver = await this.roleResolver(user);
     if (Array.isArray(fromResolver)) {
@@ -610,7 +642,7 @@ export class Gate {
     }
     const provider = this.resolveRoleProvider();
     if (provider) {
-      const fromProvider = await provider.getRoles(user);
+      const fromProvider = await (cache ? cache.getRoles(provider, user) : provider.getRoles(user));
       if (Array.isArray(fromProvider)) {
         for (const r of fromProvider) if (typeof r === 'string') out.add(r);
       }

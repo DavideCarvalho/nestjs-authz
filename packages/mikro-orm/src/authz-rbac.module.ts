@@ -66,6 +66,9 @@ export function defaultUserRefMapper(user: unknown): UserRef | undefined {
  */
 @Injectable()
 class RbacPermissionProvider implements PermissionProvider {
+  // `getPermissions` lists every grant `hasPermission` can find, for any resource.
+  readonly exhaustivePermissions = true;
+
   constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
 
   // The core `PermissionProvider` interface passes an optional `resource` (3rd
@@ -77,6 +80,16 @@ class RbacPermissionProvider implements PermissionProvider {
     const ref = map(user);
     if (ref === undefined) return undefined;
     return this.options.store.userHasPermission(ref, permission);
+  }
+
+  // Expose the user's full granted permission set so the core can apply
+  // Laravel/spatie-style wildcard matching (a granted `posts.*` satisfies a check
+  // for `posts.update`, `*` satisfies anything) and fetch it once per request.
+  async getPermissions(user: unknown): Promise<string[] | undefined> {
+    const map = this.options.userRefFrom ?? defaultUserRefMapper;
+    const ref = map(user);
+    if (ref === undefined) return undefined;
+    return this.options.store.getPermissionsForUser(ref);
   }
 }
 

@@ -1,8 +1,8 @@
 import 'reflect-metadata';
-import { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { CONTEXT_ACCESSOR, Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
 import { Test } from '@nestjs/testing';
 import type { DataSource } from 'typeorm';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
 import { TypeOrmAuthzStore } from '../src/typeorm-authz.store.js';
 import {
@@ -150,6 +150,42 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
     expect(await gate.forUser({ type: 'user', id: 42 }).hasAnyRole(['admin', 'editor'])).toBe(true);
     // A user without the role is denied.
     expect(await gate.forUser({ type: 'user', id: 99 }).hasRole('editor')).toBe(false);
+
+    await moduleRef.close();
+  });
+
+  it('one request shares a single permission and role fetch across every check', async () => {
+    await store.givePermissionToRole('editor', 'posts.publish');
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+
+    const requestStore: Record<string, unknown> = {};
+    const context = {
+      traceId: () => undefined,
+      tenantId: () => undefined,
+      userRef: () => ({ type: 'user', id: 42 }),
+      get: () => requestStore,
+    };
+    const moduleRef = await Test.createTestingModule({
+      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
+      providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: context }],
+    }).compile();
+    await moduleRef.init();
+
+    const gate = moduleRef.get(Gate);
+    gate.define('posts.delete', () => false);
+    const getPermissions = vi.spyOn(store, 'getPermissionsForUser');
+    const hasPermission = vi.spyOn(store, 'userHasPermission');
+    const getRoles = vi.spyOn(store, 'getRolesForUser');
+
+    for (let i = 0; i < 25; i++) {
+      expect(await gate.allows('posts.publish')).toBe(true);
+      expect(await gate.allows('posts.delete')).toBe(false);
+      expect(await gate.hasRole('editor')).toBe(true);
+    }
+
+    expect(getPermissions).toHaveBeenCalledTimes(1);
+    expect(hasPermission).not.toHaveBeenCalled();
+    expect(getRoles).toHaveBeenCalledTimes(1);
 
     await moduleRef.close();
   });

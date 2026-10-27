@@ -78,6 +78,10 @@ Roles answer "*is* this user an editor?". Permissions answer "*may* this user `p
 ```ts
 export interface PermissionProvider {
   hasPermission(user: User, ability: string, resource?: unknown): boolean | Promise<boolean>;
+  // optional: every permission the user holds, for wildcard matching and per-request caching
+  getPermissions?(user: User): Iterable<string> | undefined | Promise<Iterable<string> | undefined>;
+  // optional: true when getPermissions lists everything hasPermission could grant
+  readonly exhaustivePermissions?: boolean;
 }
 ```
 
@@ -89,6 +93,21 @@ if (await this.gate.allows('posts.publish')) {
   // ...
 }
 ```
+
+### Wildcards and per-request caching
+
+When the provider implements `getPermissions`, the core does the matching itself, segment by segment, the same way for every adapter: a granted `posts.*` satisfies `posts.update`, and `*` satisfies anything. A provider without `getPermissions` is asked through `hasPermission` alone, which is an exact-match check.
+
+Inside one request (a [`@dudousxd/nestjs-context`](/docs/context) store), the gate fetches each user's permission set once and reuses it for every check in that request; `RoleProvider.getRoles` is memoized the same way. The set is compiled on first use, so a check is a hash lookup plus a scan of the wildcard grants. A list page that runs two checks per row still costs one permission fetch and one role fetch. Without a context store (standalone `gate.forUser(...)` calls outside a request), each check fetches on its own, and an `allowsMany` batch shares one fetch.
+
+If a check isn't satisfied by the cached set, what happens next depends on `exhaustivePermissions`:
+
+- **`exhaustivePermissions: true`.** The set is complete, so the check is answered "no grant" right away and moves on to policies and gates. The four ORM adapters' providers and `FakePermissionProvider` set this flag.
+- **Unset.** The gate still calls `hasPermission(user, ability, resource)`, because it may grant more than the set lists (for example, by looking at the resource). Leave the flag unset on a custom provider that works this way.
+
+<Callout type="warn">
+Entries are cached for the request, so a role or permission granted or revoked in the middle of a request takes effect on the **next** request. Checks later in the same request still see the set that was fetched first. Copies of the same user loaded separately share one entry when the user names its row: an `id` plus either a string `type` or a class of its own (an ORM entity). A plain object without `type` (`{ id: 1 }`) is keyed by object identity, so a human user and a service account that happen to share an id never share permissions or roles.
+</Callout>
 
 Both seams are optional and token-based, so the engine consults them when present and falls back cleanly when absent — the same "degrade gracefully" pattern authz uses for [the current-user accessor](/docs/authz/current-user). You rarely register these by hand; an [RBAC adapter](#adding-persistence) provides both:
 

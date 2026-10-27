@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-testing",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Test helpers for @dudousxd/nestjs-authz — build a Gate/BoundGate from fixture users & policies and assert with expectCan/expectCannot.",
   "license": "MIT",
   "repository": {

@@ -8,12 +8,14 @@ description: >
   helpers (operators eq, ne, gt, gte, lt, lte, in, nin, isNull, isNotNull). A @Policy scope(
   user, Entity) method produces it (returning true=allow-all, false/nullish=deny-all sugar);
   an ORM adapter such as @dudousxd/nestjs-authz-typeorm's applyScope / applyScopeConstraint
-  compiles it to a parameterized, identifier-safe WHERE. Mirrors the Gate's grant order:
-  super-admin / permission-provider grant → allow-all; anonymous / no scope → deny-all.
+  compiles it to a parameterized, identifier-safe WHERE. Mirrors the Gate's order:
+  super-admin → allow-all; a DECISION_PROVIDER planScope; the policy's scope (a persisted
+  permission never widens it); anonymous → deny-all; no policy method → a permission grant
+  allows all, else deny-all.
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "0.6.3"
+  library_version: "1.0.0"
   framework: nestjs
 ---
 
@@ -30,11 +32,13 @@ Add a `scope(user, Entity)` method to a `@Policy` class, returning a `ScopeConst
 built from the core helpers:
 
 ```ts
-import { Policy, eq, and, where, scopeAll } from '@dudousxd/nestjs-authz';
+import { Policy } from '@nestjs/authorization';
+import { PolicyFor, eq, and, where, scopeAll } from '@dudousxd/nestjs-authz';
 import { Post } from './post.entity';
 import { User } from './user.entity';
 
-@Policy(Post)
+@Policy()
+@PolicyFor(Post)
 export class PostPolicy {
   scope(user: User, _entity: typeof Post) {
     if (user.isAdmin) return scopeAll;                 // sugar: every row
@@ -75,10 +79,13 @@ await applyScope(qb, this.gate, Post);
 
 ### Grant order mirrors the single-resource Gate
 
-`gate.scope` resolves consistently with `gate.allows`: a `superAdmin` grant or a
-permission-provider grant for the ability → `scopeAll`; an anonymous user, or no
-`scope`/`viewAny` method → `scopeNone`; otherwise the policy's `scope` constraint. A
-policy `before` returning `true`/`false` scopes to allow-all/deny-all too.
+`gate.scope` resolves consistently with `gate.allows`: a `superAdmin` grant (it receives the
+entity class) → `scopeAll`; a `DECISION_PROVIDER`'s `planScope` (e.g. Cerbos `PlanResources`),
+when it does not abstain, is used as-is; a policy `before` returning `true`/`false` scopes to
+allow-all/deny-all; an anonymous user → `scopeNone`; otherwise the policy's `scope` constraint.
+The policy has the final word: a persisted `viewAny` permission does not widen it. Only when
+there is no policy `scope`/`viewAny` method does a permission grant for the ability give
+`scopeAll` (else `scopeNone`).
 
 ### Return-value sugar
 

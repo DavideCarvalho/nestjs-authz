@@ -40,7 +40,7 @@
     "@dudousxd/nestjs-authz-client": "workspace:^"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": "^1.0.0",
+    "@dudousxd/nestjs-authz": "workspace:^",
     "@dudousxd/nestjs-context": ">=0.1.0",
     "@dudousxd/nestjs-inertia": ">=1.0.0",
     "@nestjs/authorization": "^0.1.3",

@@ -32,7 +32,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": "^1.0.0",
+    "@dudousxd/nestjs-authz": ">=0.2.0",
     "@dudousxd/nestjs-authz-client": ">=0.0.0",
     "@dudousxd/nestjs-codegen": ">=0.4.0"
   },

@@ -17,8 +17,10 @@ Authorization decisions reach the front end through three tiers. Prefer the earl
 
 ### Tier 1 — Shared props (no request)
 
-Every Inertia render carries the current user's **class-level abilities** (all ad-hoc
-gates + class-level `@Policy` methods like `create`/`viewAny`) under `props.auth.can`:
+Every Inertia render carries the user's **class-level abilities** (all ad-hoc gates + the
+abilities of every official `@Policy()` that take no record, like `create`/`viewAny`) under
+`props.auth.can`. The user is the one the official guard reads (`getUser`, default
+`request.user`), and each check runs through the official `AuthorizationService`:
 
 ```jsonc
 { "auth": { "can": { "post.create": true, "access-admin": false } } }
@@ -32,7 +34,8 @@ interceptor shares the map on every Inertia request:
 ```ts
 @Module({
   imports: [
-    AuthzModule.forRoot({ policies: [PostPolicy] }),
+    AuthorizationModule.forRoot(),
+    AuthzModule.forRoot(),
     InertiaModule.forRoot({ /* ... */ }),
     AuthzInertiaModule.forRoot(), // shares props.auth.can automatically
   ],
@@ -45,12 +48,13 @@ export class AppModule {}
 
 ```ts
 InertiaModule.forRoot({
-  share: createAuthzShare(gate, policyRegistry),
+  share: createAuthzShare(gate.forUser(user), policyIndex),
 })
 ```
 
 Both resolve abilities by direct in-process `gate.allows(...)` calls — no HTTP round-trip.
-The ability name defaults to `"<resourceLower>.<method>"` (e.g. `post.create`); pass
+The ability name defaults to `"<resourceLower>.<method>"` (e.g. `post.create`), where the
+resource is the class linked with `@PolicyFor(Post)`, else the policy name without `Policy`; pass
 `abilityNamer: (_, m) => m` for bare method names, or a custom `propKey`.
 
 ### Tier 2 — Per-resource `can` map (no request)
@@ -60,7 +64,7 @@ map onto the resource in your controller:
 
 ```ts
 const post = await this.posts.find(id);
-const can = await authorizeResource(this.gate, post, ['update', 'delete']);
+const can = await authorizeResource(this.gate.forUser(user), post, ['update', 'delete']);
 return this.inertia.render('Post/Show', { post: { ...post, can } });
 // → { post: { id, title, can: { update: true, delete: false } } }
 ```
@@ -77,12 +81,13 @@ AuthzModule.forRoot({ canEndpoint: true }) // POST /authz/can → { allowed }
 // or a custom path: canEndpoint: 'api/authz/can'
 ```
 
-It runs `gate.allows(ability, resource?)` for the current context user and returns
+It runs `gate.allows(ability, resource?)` for the caller (read the way the official guard
+reads it) and returns
 `{ allowed }`. Off by default. This is the path the codegen-emitted `can()` targets.
 
 > **Class-level by default; per-instance with a loader.** Out of the box the endpoint resolves
 > **class-level abilities and ad-hoc gates** only — the `{ type, id }` shim it receives never
-> matches a `@Policy` by constructor, so a **resource-bound** ability that misses the cache and
+> matches a policy linked with `@PolicyFor` by constructor, so a **resource-bound** ability that misses the cache and
 > falls through to `/authz/can` will **deny**. To make per-instance decisions resolve at tier 3,
 > register `resourceLoaders` keyed by the resource `type`:
 >
@@ -93,7 +98,7 @@ It runs `gate.allows(ability, resource?)` for the current context user and retur
 > })
 > ```
 >
-> The endpoint then loads the real entity before authorizing, so the instance `@Policy` matches
+> The endpoint then loads the real entity before authorizing, so the linked policy matches
 > and decides correctly (a loader returning nullish → deny / not found). Prefer hydrating via
 > tiers 1-2 (shared props / `authorizeResource`) when you can; use `resourceLoaders` for the
 > abilities that genuinely need a tier-3 round-trip.

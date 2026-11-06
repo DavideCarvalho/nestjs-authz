@@ -6,7 +6,8 @@
 - **Query scopes** — compile `gate.scope(Entity)` into a Drizzle `WHERE` (`compileScope` /
   `applyScope`), so list endpoints filter at the database instead of over-fetching.
 - **RBAC persistence** — roles, permissions, tenant-scoped role assignments and direct user
-  permissions, plus the `AuthzRbacModule` Gate seam. Your app owns the Drizzle database; this
+  permissions for the official `@nestjs/authorization` policies (the core's `RolePolicy` /
+  `PermissionPolicy`) and the `Gate`, through `AuthzRbacModule`. Your app owns the Drizzle database; this
   package never opens a connection.
 
 It's the Drizzle version of `@dudousxd/nestjs-authz-typeorm`. The store surface and
@@ -16,9 +17,10 @@ between adapters leaves your data where it is.
 ## Install
 
 ```bash
-pnpm add @dudousxd/nestjs-authz-drizzle @dudousxd/nestjs-authz drizzle-orm
+pnpm add @dudousxd/nestjs-authz-drizzle @dudousxd/nestjs-authz @nestjs/authorization drizzle-orm
 ```
 
+Requires NestJS 12, `@nestjs/authorization` ^0.1.3, `@dudousxd/nestjs-authz` 1.x and Node 22+.
 `drizzle-orm` is a peer (`>=0.40.0 <1.0.0`). Any Drizzle Postgres driver works:
 `node-postgres`, `postgres-js`, PGlite, Neon, and so on.
 
@@ -27,9 +29,11 @@ pnpm add @dudousxd/nestjs-authz-drizzle @dudousxd/nestjs-authz drizzle-orm
 Write a policy `scope` with the ORM-neutral builders from the core:
 
 ```ts
-import { Policy, eq, or, type ScopeConstraint } from '@dudousxd/nestjs-authz';
+import { Policy } from '@nestjs/authorization';
+import { PolicyFor, eq, or, type ScopeConstraint } from '@dudousxd/nestjs-authz';
 
-@Policy(Post)
+@Policy()
+@PolicyFor(Post)
 export class PostPolicy {
   scope(user: User): ScopeConstraint {
     return or(eq('authorId', user.id), eq('published', true));
@@ -44,7 +48,7 @@ import { applyScope, compileScope } from '@dudousxd/nestjs-authz-drizzle';
 import { and, eq } from 'drizzle-orm';
 import { posts } from './db/schema';
 
-const scope = await applyScope(gate, Post, posts); // = compileScope(await gate.scope(Post), posts)
+const scope = await applyScope(gate.forUser(user), Post, posts); // = compileScope(await gate.forUser(user).scope(Post), posts)
 const rows = await db.select().from(posts).where(and(scope, eq(posts.archived, false)));
 ```
 
@@ -53,7 +57,8 @@ const rows = await db.select().from(posts).where(and(scope, eq(posts.archived, f
   the SQL.
 - To allowlist columns explicitly, or to scope over a JOIN, pass a column map instead of a
   table: `compileScope(constraint, { authorId: posts.authorId, orgId: orgs.id })`.
-- `allow-all` (super-admin, `before` grant, permission-provider grant) returns `undefined`.
+- `allow-all` (super-admin, `before` grant, or a permission grant for an entity whose policy
+  has no scope method) returns `undefined`.
   Both `.where()` and `and()` ignore it, so no predicate is added. `deny-all` becomes `1 = 0`.
 - Values always go through Drizzle's operators. They're bound as parameters and mapped by the
   column (for example, a `Date` becomes a timestamp).
@@ -75,14 +80,33 @@ export class AppModule {}
 ```
 
 ```ts
-await store.givePermissionToRole('editor', 'posts.publish');
+await store.givePermissionToRole('editor', 'posts.*');
 await store.assignRole({ type: 'user', id: 7 }, 'editor');                     // global
 await store.assignRole({ type: 'user', id: 7 }, 'admin', { tenantId: 'acme' }); // tenant-scoped
 await store.giveUserPermission(7, 'reports.export');                           // direct grant
-
-gate.forUser(user).allows('posts.publish'); // true (PERMISSION_PROVIDER seam, wildcards supported)
-gate.forUser(user).hasRole('editor');       // true (ROLE_PROVIDER seam)
 ```
+
+Persisted roles and permissions then guard routes through the official guard:
+
+```ts
+@Permission('posts.publish')                                  // posts.* grants it
+@Can(PermissionPolicy, 'has', permission('posts.publish'))   // the same, spelled out
+@Roles('editor')                                              // @Can(RolePolicy, 'has', roles('editor'))
+```
+
+and services, through the `Gate`:
+
+```ts
+gate.forUser(user).allows('posts.publish');               // true (PERMISSION_PROVIDER seam)
+gate.forUser(user).allows(PermissionPolicy, 'has', 'posts.publish');
+gate.forUser(user).hasRole('editor');                     // true (ROLE_PROVIDER seam)
+```
+
+The user is the one the official guard reads (`AuthorizationModule.forRoot({ getUser })`,
+default `request.user`), mapped to a store ref with `userRefFrom` (default `{ type, id }` or
+`{ id }`). Within one request, the guard and the handler's `Gate` calls share one permission
+and one role query per user. A permission never bypasses a policy that defines the ability:
+`gate.allows('update', post)` is `PostPolicy`'s to decide.
 
 With `@dudousxd/nestjs-context` installed, the module reads the current tenant from the context
 accessor. A tenant-scoped role then grants only inside its own tenant. Global roles and direct

@@ -1,7 +1,7 @@
 {
   "name": "@dudousxd/nestjs-authz-testing",
   "version": "0.1.1",
-  "description": "Test helpers for @dudousxd/nestjs-authz — build a Gate/BoundGate from fixture users & policies and assert with expectCan/expectCannot.",
+  "description": "Test helpers for @dudousxd/nestjs-authz on @nestjs/authorization: a real Gate on a Nest testing module, expectCan/expectCannot, in-memory RBAC fakes, route requirement inspection.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,13 +34,20 @@
   "peerDependencies": {
     "@dudousxd/nestjs-authz": "^1.0.0",
     "@nestjs/authorization": "^0.1.3",
+    "@nestjs/common": "^12.0.0",
+    "@nestjs/core": "^12.0.0",
+    "@nestjs/testing": "^12.0.0",
     "reflect-metadata": ">=0.1.13"
   },
   "devDependencies": {
     "@dudousxd/nestjs-authz": "workspace:^",
     "@nestjs/authorization": "0.1.3",
+    "@nestjs/common": "12.0.1",
+    "@nestjs/core": "12.0.1",
+    "@nestjs/testing": "12.0.1",
     "@types/node": "22.20.5",
     "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
     "typescript": "5.9.3",
     "vitest": "3.2.7"
   },

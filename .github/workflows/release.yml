@@ -24,7 +24,7 @@ jobs:
       - uses: pnpm/action-setup@v6.1.0
       - uses: actions/setup-node@v7.0.0
         with:
-          node-version: 20.20.2
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -47,7 +47,7 @@ jobs:
       - uses: pnpm/action-setup@v6.1.0
       - uses: actions/setup-node@v7.0.0
         with:
-          node-version: 20.20.2
+          node-version: 22
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
       # npm learned OIDC in 11.5.1 and the Node pinned above ships 10.x, so without this the
@@ -218,7 +218,7 @@ jobs:
       - uses: pnpm/action-setup@v6.1.0
       - uses: actions/setup-node@v7.0.0
         with:
-          node-version: 20.20.2
+          node-version: 22
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
       # npm learned OIDC in 11.5.1 and the Node pinned above ships 10.x, so without this the

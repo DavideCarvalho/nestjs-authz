@@ -1,9 +1,10 @@
 import 'reflect-metadata';
 import {
+  AuthzModule,
+  type AuthzModuleOptions,
   CONTEXT_ACCESSOR,
   Gate,
-  Policy,
-  PolicyRegistry,
+  PolicyFor,
   type ScopeConstraint,
   and,
   eq,
@@ -17,6 +18,7 @@ import {
   PrimaryKey,
   Property,
 } from '@mikro-orm/better-sqlite';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyScope, compileScope } from '../src/scope.js';
@@ -53,9 +55,9 @@ async function seed(em: EntityManager): Promise<void> {
   await em.flush();
 }
 
-function buildGate(opts: ConstructorParameters<typeof Gate>[1] = {}): Promise<Gate> {
+function buildGate(opts: AuthzModuleOptions = {}): Promise<Gate> {
   return (async () => {
-    @Policy(Post)
+    @PolicyFor(Post)
     class PostPolicy {
       // A user sees their OWN posts, or any PUBLISHED post.
       scope(user: Author): ScopeConstraint {
@@ -63,16 +65,10 @@ function buildGate(opts: ConstructorParameters<typeof Gate>[1] = {}): Promise<Ga
       }
     }
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        PolicyRegistry,
-        {
-          provide: Gate,
-          useFactory: (r: PolicyRegistry) => new Gate(r, opts),
-          inject: [PolicyRegistry],
-        },
-      ],
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot(opts)],
+      providers: [PostPolicy],
     }).compile();
-    moduleRef.get(PolicyRegistry).register(new PostPolicy());
+    await moduleRef.init();
     return moduleRef.get(Gate);
   })();
 }
@@ -118,24 +114,17 @@ describe('MikroORM applyScope (integration, sqlite)', () => {
       userRef: () => undefined,
       get: () => undefined,
     };
-    @Policy(Post)
+    @PolicyFor(Post)
     class PostPolicy {
       scope(user: Author): ScopeConstraint {
         return or(eq('authorId', user.id), eq('published', 1));
       }
     }
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        PolicyRegistry,
-        {
-          provide: Gate,
-          useFactory: (r: PolicyRegistry) => new Gate(r, {}, accessor),
-          inject: [PolicyRegistry],
-        },
-        { provide: CONTEXT_ACCESSOR, useValue: accessor },
-      ],
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot({})],
+      providers: [PostPolicy, { provide: CONTEXT_ACCESSOR, useValue: accessor }],
     }).compile();
-    moduleRef.get(PolicyRegistry).register(new PostPolicy());
+    await moduleRef.init();
     const gate = moduleRef.get(Gate);
 
     const filter = await applyScope<Post>(gate, Post);

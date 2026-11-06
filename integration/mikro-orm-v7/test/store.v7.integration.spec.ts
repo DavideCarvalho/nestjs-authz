@@ -1,7 +1,8 @@
 import 'reflect-metadata';
 import { createRequire } from 'node:module';
-import { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { AuthzModule, Gate } from '@dudousxd/nestjs-authz';
 import { MikroORM } from '@mikro-orm/sqlite';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // Import the package SOURCE (not the built dist / workspace symlink): doing so resolves its
@@ -119,8 +120,12 @@ describe(`MikroOrmAuthzStore on MikroORM ${coreVersion} (integration, sqlite)`, 
     await store.assignRole({ type: 'User', id: 'u1' }, 'ADMIN');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 

@@ -1,15 +1,17 @@
 import 'reflect-metadata';
 import {
+  AuthzModule,
+  type AuthzModuleOptions,
   CONTEXT_ACCESSOR,
   Gate,
-  Policy,
-  PolicyRegistry,
+  PolicyFor,
   type ScopeConstraint,
   and as scopeAnd,
   eq as scopeEq,
   or as scopeOr,
   where,
 } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { and, asc, eq } from 'drizzle-orm';
 import { integer, pgTable, serial, text } from 'drizzle-orm/pg-core';
@@ -41,8 +43,8 @@ interface Author {
   isAdmin?: boolean;
 }
 
-async function buildGate(opts: ConstructorParameters<typeof Gate>[1] = {}): Promise<Gate> {
-  @Policy(Post)
+async function buildGate(opts: AuthzModuleOptions = {}): Promise<Gate> {
+  @PolicyFor(Post)
   class PostPolicy {
     // A user sees their OWN posts, or any PUBLISHED post.
     scope(user: Author): ScopeConstraint {
@@ -50,16 +52,10 @@ async function buildGate(opts: ConstructorParameters<typeof Gate>[1] = {}): Prom
     }
   }
   const moduleRef = await Test.createTestingModule({
-    providers: [
-      PolicyRegistry,
-      {
-        provide: Gate,
-        useFactory: (r: PolicyRegistry) => new Gate(r, opts),
-        inject: [PolicyRegistry],
-      },
-    ],
+    imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot(opts)],
+    providers: [PostPolicy],
   }).compile();
-  moduleRef.get(PolicyRegistry).register(new PostPolicy());
+  await moduleRef.init();
   return moduleRef.get(Gate);
 }
 
@@ -115,24 +111,17 @@ describeIntegration(`Drizzle applyScope (integration, ${targetDialect()})`, () =
       userRef: () => undefined,
       get: () => undefined,
     };
-    @Policy(Post)
+    @PolicyFor(Post)
     class PostPolicy {
       scope(user: Author): ScopeConstraint {
         return scopeEq('authorId', user.id);
       }
     }
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        PolicyRegistry,
-        {
-          provide: Gate,
-          useFactory: (r: PolicyRegistry) => new Gate(r, {}, accessor),
-          inject: [PolicyRegistry],
-        },
-        { provide: CONTEXT_ACCESSOR, useValue: accessor },
-      ],
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot({})],
+      providers: [PostPolicy, { provide: CONTEXT_ACCESSOR, useValue: accessor }],
     }).compile();
-    moduleRef.get(PolicyRegistry).register(new PostPolicy());
+    await moduleRef.init();
     const scope = await applyScope(moduleRef.get(Gate), Post, posts);
     expect(await titles(scope)).toEqual([]);
   });

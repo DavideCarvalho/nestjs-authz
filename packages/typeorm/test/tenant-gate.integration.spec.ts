@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { CONTEXT_ACCESSOR, Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { AuthzModule, CONTEXT_ACCESSOR, Gate } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -61,8 +62,12 @@ describeIntegration(
       const ctx = mutableContext();
 
       const moduleRef = await Test.createTestingModule({
-        imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-        providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
+        imports: [
+          AuthorizationModule.forRoot(),
+          AuthzModule.forRoot(),
+          AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+        ],
+        providers: [{ provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
       }).compile();
       await moduleRef.init();
       const gate = moduleRef.get(Gate);
@@ -82,8 +87,12 @@ describeIntegration(
       const ctx = mutableContext();
 
       const moduleRef = await Test.createTestingModule({
-        imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-        providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
+        imports: [
+          AuthorizationModule.forRoot(),
+          AuthzModule.forRoot(),
+          AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+        ],
+        providers: [{ provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
       }).compile();
       await moduleRef.init();
       const gate = moduleRef.get(Gate);
@@ -102,8 +111,12 @@ describeIntegration(
       const ctx = mutableContext();
 
       const moduleRef = await Test.createTestingModule({
-        imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-        providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
+        imports: [
+          AuthorizationModule.forRoot(),
+          AuthzModule.forRoot(),
+          AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+        ],
+        providers: [{ provide: CONTEXT_ACCESSOR, useValue: ctx.accessor }],
       }).compile();
       await moduleRef.init();
       const gate = moduleRef.get(Gate);

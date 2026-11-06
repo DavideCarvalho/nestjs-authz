@@ -1,138 +1,140 @@
 ---
 title: Gates
-description: Ad-hoc, model-less abilities — define, allows, authorize, forUser, and the BoundGate API.
+description: The service-layer Gate over the official AuthorizationService — policy-class and string checks, ad-hoc gates with define, forUser and BoundGate, allowsMany, roles and query scopes.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A **gate** is an ad-hoc ability that isn't tied to any particular resource. Where a [policy](/docs/authz/policies) answers "can this user update *this post*?", a gate answers questions like "can this user access the admin area?" or "can this user invite teammates?" — checks that are about the user (and maybe app state), not a specific entity.
+The official `AuthorizationService.can/authorize(Policy, ability, user, ...args)` checks a policy
+from a service. The `Gate` wraps it and adds what it lacks: Laravel-style string abilities,
+ad-hoc gates, batches, roles, query scopes, an ambient user and the allow + deny decision event.
+Every policy decision is still the official service's.
 
-Gates are the lightest of the [three layers](/docs/authz#the-three-layers). Reach for one when writing a whole policy class would be overkill.
-
-## Defining a gate
-
-Inject the `Gate` and register a named ability with `define`. The function receives the current user (and an optional resource) and returns a boolean:
+## Checking
 
 ```ts
-import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Gate } from '@dudousxd/nestjs-authz';
 
+constructor(private readonly gate: Gate) {}
+
+const user = this.gate.forUser(currentUser);          // a BoundGate
+
+await user.authorize(PostPolicy, 'update', post);     // exactly AuthorizationService.authorize
+await user.allows(ReportPolicy, 'export', 'csv');     // any args, typed from the policy
+await user.allows('update', post);                    // the policy linked to Post (@PolicyFor)
+await user.allows('create', Post);                    // a class-level ability, by resource class
+await user.allows('posts.publish');                   // a persisted permission
+await user.denies('update', post);
+```
+
+`authorize()` throws the official `AuthorizationError` (401 for a guest, 403 otherwise; the
+official module maps it to the transport's error when it leaves a handler). Without `forUser`,
+`gate.allows(...)` uses the [ambient user](/docs/authz/current-user). `forUser(null)` is an
+explicit guest.
+
+## How a string ability resolves
+
+`gate.allows(ability, resource?)` asks, in order:
+
+1. the global `superAdmin(user, ability, resource)` hook — `true` allows;
+2. the [`DECISION_PROVIDER`](/docs/authz/external-engines), when registered — allow or deny is
+   final, `undefined` abstains;
+3. the policy linked to the resource that defines the ability (official evaluation: its
+   `before()`, then the ability);
+4. the persisted permissions ([RBAC](/docs/authz/rbac)), wildcards included;
+5. an ad-hoc gate registered with `define`;
+6. otherwise `AbilityNotResolvedException`.
+
+<Callout type="warn" title="The policy has the final word">
+A persisted permission named like one of a policy's abilities (`update`) does **not** bypass the
+policy: `gate.allows('update', post)` is `PostPolicy`'s to decide, whatever the user's
+permissions. Only `superAdmin` (and a `DECISION_PROVIDER`) come first. Permissions grant the
+named abilities no policy defines (`posts.publish`).
+</Callout>
+
+## Ad-hoc gates
+
+A model-less ability, for app-wide checks:
+
+```ts
 @Injectable()
 export class AuthzGates implements OnModuleInit {
   constructor(private readonly gate: Gate) {}
 
   onModuleInit() {
-    this.gate.define('access-admin', (user) => user.role === 'staff');
-    this.gate.define('invite-teammates', (user) => user.plan === 'team');
+    this.gate
+      .define('access-admin', (user) => user.isStaff)
+      .define('invite-teammates', async (user) => (await plans.of(user)).team);
   }
 }
+
+await this.gate.forUser(user).allows('access-admin');
 ```
 
-<Callout type="info">
-`define` returns the gate, so you can chain registrations: `gate.define('a', fnA).define('b', fnB)`. Registering gates in an `OnModuleInit` hook (or any bootstrap provider) ensures they exist before the first request.
-</Callout>
-
-The gate function is `(user, resource?) => boolean | Promise<boolean>`. Async works — return a promise:
-
-```ts
-this.gate.define('access-billing', async (user) => {
-  const subscription = await billing.findActive(user.id);
-  return subscription?.status === 'active';
-});
-```
-
-## Checking a gate
-
-The same three methods you use for policies work for gates — authz dispatches by ability name and falls back to a registered gate when no policy matches:
-
-```ts
-// boolean, never throws:
-if (await this.gate.allows('access-admin')) {
-  /* show the admin nav */
-}
-
-// inverse of allows:
-if (await this.gate.denies('access-admin')) {
-  /* hide it */
-}
-
-// throws ForbiddenException (HTTP 403) on deny:
-await this.gate.authorize('access-admin');
-```
-
-All three read the current user from [nestjs-context](/docs/context) automatically. An **anonymous** request (no user) is denied before the gate function ever runs — your function never receives `undefined` and never has to null-check the user.
-
-You can also enforce a gate declaratively on a route — `@Can('access-admin')` with no resource class dispatches to the gate:
+A guest is denied before the function runs. On a route, use the built-in `GatePolicy`:
 
 ```ts
 @Get('admin')
-@Can('access-admin')
-dashboard() { /* only staff reach here */ }
+@Can(GatePolicy, 'allows', ability('access-admin'))
+dashboard() {}
 ```
 
-See [Enforcement](/docs/authz/enforcement) for the guard details.
+`gate.hasGate(name)` and `gate.gateNames()` list what is registered.
 
-## `gate.forUser` and the `BoundGate`
-
-Every check above operates on the *current* user from the request context. To check a **specific** user instead — for example in a background job, a CLI command, or a test where there's no request — bind one with `forUser`:
+## Batches
 
 ```ts
-const bound = this.gate.forUser(someUser); // returns a BoundGate
-
-await bound.allows('access-admin');
-await bound.authorize('invite-teammates');
-await bound.denies('access-billing');
+const results = await this.gate.forUser(user).allowsMany([
+  { ability: 'update', resource: post },
+  { policy: ReportPolicy, ability: 'export', args: ['csv'] },
+]); // [{ ...item, allowed }], in order
 ```
 
-`forUser` returns a **`BoundGate`** — a gate locked to the user you passed. Its surface mirrors the current-user API:
+A batch shares one permission fetch (and asks a `DECISION_PROVIDER`'s `decideMany` once). An
+item that throws (an unknown ability) denies only itself.
 
-| `Gate` (current user) | `BoundGate` (explicit user) |
-|-----------------------|-----------------------------|
-| `allows(ability, resource?)` | `allows(ability, resource?)` |
-| `denies(ability, resource?)` | `denies(ability, resource?)` |
-| `authorize(ability, resource?)` | `authorize(ability, resource?)` |
-| `hasRole(role)` | `hasRole(role)` |
-| `hasAnyRole(roles)` | `hasAnyRole(roles)` |
-
-<Callout type="info">
-`forUser` is also the answer when **nestjs-context is not installed**. With no context to read from, bind the user yourself — `gate.forUser(req.user).allows(...)`. The value you pass is used verbatim; the `resolveUser` hydration hook is **not** applied on this path. See [Current user](/docs/authz/current-user#foruser-bypasses-resolveuser).
-</Callout>
-
-Passing a nullish user (`forUser(undefined)` or `forUser(null)`) is an **explicit anonymous request**: it maps to the same deny path as an unauthenticated context, so checks return `false` (or `authorize` throws) rather than blowing up with a `TypeError`.
-
-## Inspecting registered gates
-
-A few helpers let you introspect what's registered — useful for tooling and integrations:
+## Roles
 
 ```ts
-this.gate.hasGate('access-admin'); // true if a gate is registered for this ability
-this.gate.gateNames();             // ['access-admin', 'invite-teammates', ...]
+await this.gate.hasRole('editor');
+await this.gate.forUser(user).hasAnyRole(['admin', 'editor']);
 ```
 
-`gateNames()` is what integrations such as [nestjs-authz-inertia](/docs/authz/ecosystem) use to enumerate a user's model-less abilities and share them with the frontend without a network round-trip.
+A plain fact: `superAdmin` does not apply here (it does on `RolePolicy`).
 
-## Gates vs policies — which do I reach for?
+## Query scopes
 
-| | **Gate** | **Policy** |
-|---|----------|------------|
-| Tied to a resource? | No — model-less | Yes — one class per resource |
-| Where defined | `gate.define('name', fn)` at runtime | `@Policy(Resource)` class, method per ability |
-| Typical question | "Can this user *do this thing*?" | "Can this user *do X to this entity*?" |
-| Grouping | Standalone functions | Many abilities grouped by resource |
-| `before` bypass | Use the global `superAdmin` hook | Per-policy `before` **and** `superAdmin` |
-| Good for | App-wide capabilities, feature flags, plan gates | CRUD authorization, ownership checks |
+```ts
+const where = await this.gate.forUser(user).scope(Post);           // or scope(PostPolicy, 'viewAny')
+await applyScope(qb, this.gate.forUser(user), Post);               // TypeORM adapter
+```
 
-A useful rule of thumb: if the check needs the resource instance to decide, it's a **policy ability**; if it only needs the user, it can be a **gate** (or a [class-level policy ability](/docs/authz/policies#class-level-abilities) if it conceptually belongs to a resource, like `create`).
+`gate.scope(entity, ability = 'viewAny')` resolves:
 
-<Callout type="info">
-Resolution order matters when an ability name could match both. authz checks the global `superAdmin` hook and the RBAC permission seam first, then a **policy** (if a resource maps to one), and only then a registered **gate**. So a policy ability "wins" over a same-named gate for a given resource. In practice, keep gate names and policy ability names distinct to avoid surprises.
-</Callout>
+1. `superAdmin(user, ability, entity)` → allow-all;
+2. the `DECISION_PROVIDER`'s `planScope`, when it does not abstain → used as is;
+3. the policy's `before()` `true` / `false` → allow-all / deny-all;
+4. a guest → deny-all;
+5. the policy's `scope(user, entity)` (else its `ability` method).
+
+A persisted permission does not widen a policy's scope; it gives allow-all only when there is no
+policy method to ask.
+
+## `Gate` and `BoundGate`
+
+| `Gate` (ambient user) | `BoundGate` (`gate.forUser(user)`) |
+| --- | --- |
+| `allows` / `denies` / `authorize` | the same |
+| `allowsMany(items)` | the same |
+| `scope(entity, ability?)` | the same |
+| `hasRole(role)` / `hasAnyRole(roles)` | the same |
+| `define`, `hasGate`, `gateNames` | — |
 
 ## Next steps
 
 <Cards>
-  <Card title="Policies" href="/docs/authz/policies" description="The resource-bound counterpart to gates." />
-  <Card title="Enforcement" href="/docs/authz/enforcement" description="Guarding routes with @Can — including model-less gates." />
-  <Card title="Current user" href="/docs/authz/current-user" description="forUser, the context path, and anonymous handling." />
-  <Card title="RBAC" href="/docs/authz/rbac" description="Persisted permissions that can grant gate abilities." />
+  <Card title="Enforcement" href="/docs/authz/enforcement" description="The same checks on routes, through the official guard." />
+  <Card title="Current user" href="/docs/authz/current-user" description="The ambient user of calls without forUser." />
+  <Card title="RBAC" href="/docs/authz/rbac" description="The persisted permissions step 4 asks." />
+  <Card title="External engines" href="/docs/authz/external-engines" description="The decision provider step 2 asks." />
 </Cards>

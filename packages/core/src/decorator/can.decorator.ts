@@ -1,41 +1,71 @@
 import 'reflect-metadata';
-import { SetMetadata, type Type } from '@nestjs/common';
-import { CAN_METADATA } from '../tokens.js';
+import type { Type } from '@nestjs/common';
+import { byId, staticCanArgs } from '../helpers.js';
+import { policyForResource } from '../links.js';
+import { OFFICIAL_CAN_METADATA, type OfficialCanRequirement } from '../official.js';
+import { GatePolicy } from '../policies/gate.policy.js';
 
+/** @deprecated Options of the deprecated string {@link Can}. */
 export interface CanOptions {
-  /**
-   * Class-level ability (e.g. `create`): the policy method is keyed to the
-   * resource class but receives NO instance, so the guard skips resource loading.
-   */
-  classLevel?: boolean;
-}
-
-export interface CanMetadata {
-  ability: string;
-  /** Resource class — to load an instance, or (for class-level) to locate the policy. */
-  resource?: Type<unknown>;
-  /** When true, skip resource loading and dispatch against the resource class. */
+  /** The ability takes no record: the policy method runs with the user only. */
   classLevel?: boolean;
 }
 
 /**
- * Guard a route with an authorization check.
+ * @deprecated Use the official `@Can()` from `@nestjs/authorization`, which names the
+ * policy. This string form is kept for one major version and only writes the official
+ * metadata, which the official `AuthorizationGuard` enforces:
  *
- * @example
- *   `@Can('update', Post)`                    // resolve Post by :id, run PostPolicy.update(user, post)
- *   `@Can('create', Post, { classLevel: true })` // run PostPolicy.create(user) — no instance loaded
- *   `@Can('access-admin')`                    // ad-hoc gate, no resource
+ * | Deprecated | Official equivalent |
+ * | --- | --- |
+ * | `@Can('update', Post)` | `@Can(PostPolicy, 'update', byId(Post))` |
+ * | `@Can('create', Post, { classLevel: true })` | `@Can(PostPolicy, 'create')` |
+ * | `@Can('access-admin')` | `@Can(GatePolicy, 'allows', ability('access-admin'))` |
  *
- * When a resource class is provided (and not `classLevel`), the guard loads an
- * instance via the registered `ResourceResolver` (default: by route `:id`).
+ * `PostPolicy` is the policy linked to `Post` with `@PolicyFor(Post)` (or the deprecated
+ * `@Policy(Post)`), looked up when the application starts.
  */
 export function Can(
   ability: string,
   resource?: Type<unknown>,
   options?: CanOptions,
 ): MethodDecorator & ClassDecorator {
-  const meta: CanMetadata = { ability };
-  if (resource !== undefined) meta.resource = resource;
-  if (options?.classLevel) meta.classLevel = true;
-  return SetMetadata(CAN_METADATA, meta);
+  const requirement = (
+    resource === undefined
+      ? { policy: GatePolicy, ability: 'allows', args: staticCanArgs(ability) }
+      : linkedRequirement(ability, resource, options?.classLevel === true)
+  ) as OfficialCanRequirement;
+  return (target: object, _key?: string | symbol, descriptor?: PropertyDescriptor) => {
+    const host = descriptor ? (descriptor.value as object) : target;
+    const existing = (Reflect.getMetadata(OFFICIAL_CAN_METADATA, host) as unknown[]) ?? [];
+    Reflect.defineMetadata(OFFICIAL_CAN_METADATA, [requirement, ...existing], host);
+  };
+}
+
+/**
+ * A requirement whose `policy` is looked up when first read (at startup, by the
+ * official registry's check), so `@Can('update', Post)` works whatever order the
+ * policy and the controller are imported in.
+ */
+function linkedRequirement(
+  ability: string,
+  resource: Type<unknown>,
+  classLevel: boolean,
+): OfficialCanRequirement {
+  const requirement = { ability } as OfficialCanRequirement;
+  Object.defineProperty(requirement, 'policy', {
+    enumerable: true,
+    get(): Type<unknown> {
+      const policy = policyForResource(resource);
+      if (!policy) {
+        throw new Error(
+          `@Can('${ability}', ${resource.name}): no policy is linked to ${resource.name}. ` +
+            `Decorate its policy with @PolicyFor(${resource.name}).`,
+        );
+      }
+      return policy;
+    },
+  });
+  if (!classLevel) requirement.args = byId(resource);
+  return requirement;
 }

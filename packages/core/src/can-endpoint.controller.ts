@@ -1,6 +1,16 @@
-import { Body, Controller, Inject, Optional, type Type } from '@nestjs/common';
+import { Can } from '@nestjs/authorization';
+import {
+  Body,
+  Controller,
+  type ExecutionContext,
+  Inject,
+  Optional,
+  type Type,
+  createParamDecorator,
+} from '@nestjs/common';
 import { Post as HttpPost } from '@nestjs/common';
-import { Gate } from './gate.js';
+import { type BoundGate, Gate } from './gate.js';
+import { currentUserOf } from './runtime.js';
 import { RESOURCE_HYDRATOR } from './tokens.js';
 import type { ResourceLoaderMap } from './types.js';
 
@@ -37,8 +47,8 @@ export interface CanBatchResultItem {
  * Build the opt-in fallback controller class, mounted at `path`. Kept as a
  * factory so the route path is configurable via `AuthzModule.forRoot({ canEndpoint })`.
  *
- * The endpoint runs `gate.allows(ability, resource?)` for the CURRENT (context)
- * user.
+ * The endpoint runs `gate.allows(ability, resource?)` for the caller, read the way
+ * the official guard reads it.
  *
  * RESOURCE REHYDRATION — how per-instance decisions resolve:
  * the client sends a `{ type, id }` shim whose constructor is `Object`, which never
@@ -52,7 +62,13 @@ export interface CanBatchResultItem {
  * (a deliberate, documented fall-through, not a silent dead-end). An unresolved ability
  * is likewise treated as a deny (never a 500).
  */
+/** The caller, read the way the official guard reads it (`getUser`, else `defaultGetUser`). */
+const Caller = createParamDecorator((_data: unknown, ctx: ExecutionContext) => currentUserOf(ctx));
+
 export function createCanController(path: string): Type<unknown> {
+  // The endpoint answers for any caller (guests get `false`s); the official guard denies
+  // undeclared handlers, so it is opened explicitly.
+  @Can.Anyone()
   @Controller(path)
   class AuthzCanController {
     constructor(
@@ -65,10 +81,12 @@ export function createCanController(path: string): Type<unknown> {
     @HttpPost()
     async can(
       @Body() body: CanRequestBody | CanBatchRequestBody,
+      @Caller() caller: Promise<unknown>,
     ): Promise<CanResponseBody | CanBatchResultItem[]> {
+      const gate = this.gate.forUser(await caller);
       // Array body → batch path (one user/permission resolution for the whole list).
       if (Array.isArray(body)) {
-        return this.canBatch(body);
+        return this.canBatch(gate, body);
       }
       const ability = body?.ability;
       if (typeof ability !== 'string' || ability.length === 0) {
@@ -79,7 +97,7 @@ export function createCanController(path: string): Type<unknown> {
         const target = await this.rehydrate(resource);
         // A registered loader that produced nothing → not found → deny.
         if (target === null) return { allowed: false };
-        const allowed = await this.gate.allows(ability, target);
+        const allowed = await gate.allows(ability, target);
         return { allowed };
       } catch {
         // Unresolved/ambiguous ability — fail closed.
@@ -96,7 +114,10 @@ export function createCanController(path: string): Type<unknown> {
      * not-found loader, an empty ability, or an unresolved ability denies that item
      * (never fails the whole batch).
      */
-    private async canBatch(items: CanBatchRequestBody): Promise<CanBatchResultItem[]> {
+    private async canBatch(
+      gate: BoundGate,
+      items: CanBatchRequestBody,
+    ): Promise<CanBatchResultItem[]> {
       // Validate + rehydrate each item up front. `verdicts[i] === false` already
       // pins the outright-denials (bad ability / not-found resource); `undefined`
       // means "send to the batch". `batchInput` carries the surviving items plus
@@ -126,7 +147,7 @@ export function createCanController(path: string): Type<unknown> {
 
       // ONE pass over the surviving items: user + permission set resolved once.
       // `allowsMany` is fault-isolating, so an unresolved ability denies just its item.
-      const results = await this.gate.allowsMany(
+      const results = await gate.allowsMany(
         batchInput.map((b) =>
           b.resource === undefined
             ? { ability: b.ability }

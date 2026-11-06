@@ -7,12 +7,6 @@ export abstract class AuthzException extends Error {
   }
 }
 
-export class PolicyNotDecoratedException extends AuthzException {
-  constructor(public readonly policyName: string) {
-    super(`${policyName} is missing @Policy(Resource). Decorate it with the resource class.`);
-  }
-}
-
 /**
  * Thrown when an ability cannot be matched to any policy method or ad-hoc gate.
  *
@@ -45,14 +39,6 @@ export class AmbiguousAbilityException extends BadRequestException {
       `Ability "${ability}" is ambiguous: it is defined by multiple policies (${policyNames.join(
         ', ',
       )}). Pass the resource class explicitly, e.g. gate.allows('${ability}', Resource).`,
-    );
-  }
-}
-
-export class ResourceResolverMissingException extends AuthzException {
-  constructor(public readonly ability: string) {
-    super(
-      `@Can('${ability}', Resource) needs an instance but no ResourceResolver is registered. Register one via AuthzModule.forRoot or pass the resource programmatically.`,
     );
   }
 }

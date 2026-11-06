@@ -3,38 +3,69 @@
 // and injects nothing, so the literal below is what ships in dist.
 export const VERSION = '0.8.1';
 
-export { Gate, BoundGate } from './gate.js';
-export type { BatchAbility, BatchResult } from './gate.js';
-export { PermissionCache } from './permission-cache.js';
-export { authzDecisionChannel, publishAuthzDecision } from './diagnostics.js';
-export type { AuthzDecisionDiagnostic, AuthzDecisionReason } from './diagnostics.js';
-export { PolicyRegistry } from './policy-registry.js';
-export { Policy, getPolicyResource } from './decorator/policy.decorator.js';
-export { Can } from './decorator/can.decorator.js';
-export type { CanMetadata, CanOptions } from './decorator/can.decorator.js';
-export { Roles } from './decorator/roles.decorator.js';
-export { CanGuard } from './guard/can.guard.js';
-export { RolesGuard } from './guard/roles.guard.js';
+// Extras on top of @nestjs/authorization. Its own API (@Policy, @Can, Can.Anyone,
+// AuthorizationModule, AuthorizationService, AuthorizationGuard) is imported from there.
+
 export { AuthzModule } from './module.js';
+export { Gate, BoundGate } from './gate.js';
+export type {
+  AbilityArgsOf,
+  BatchAbility,
+  BatchItem,
+  BatchPolicyCheck,
+  BatchResult,
+} from './gate.js';
+
+// Official policies and the super-admin base class
 export {
-  createCanController,
-  DEFAULT_CAN_ENDPOINT_PATH,
-} from './can-endpoint.controller.js';
-export type {
-  CanRequestBody,
-  CanResponseBody,
-  CanBatchRequestBody,
-  CanBatchResultItem,
-} from './can-endpoint.controller.js';
-export { IdParamResourceResolver } from './resource-resolver.js';
-export type { ResourceResolver } from './resource-resolver.js';
-export type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
+  AuthzPolicy,
+  superAdminBefore,
+  decisionProviderBefore,
+  RolePolicy,
+  PermissionPolicy,
+  GatePolicy,
+} from './policies/index.js';
+
+// Helpers for the official @Can()
+export {
+  STATIC_CAN_ARGS,
+  staticCanArgs,
+  getStaticCanArgs,
+  byId,
+  roles,
+  permission,
+  permissions,
+  ability,
+  authorizedResource,
+} from './helpers.js';
+export type { ByIdOptions, CanArgsResolver } from './helpers.js';
+export { Roles, Permission } from './decorator/roles.decorator.js';
+
+// Resource ↔ policy link
+export { PolicyFor, policyForResource, getPolicyResource, policyLinks } from './links.js';
+export { PolicyIndex } from './policy-index.js';
+export type { IndexedPolicy } from './policy-index.js';
+
+// Reading the official metadata
+export {
+  OFFICIAL_POLICY_METADATA,
+  OFFICIAL_CAN_METADATA,
+  OFFICIAL_CAN_ANYONE_METADATA,
+  isOfficialPolicy,
+  readCanRequirements,
+  routeRequirements,
+} from './official.js';
+export type { OfficialCanRequirement } from './official.js';
+export { currentUserOf } from './runtime.js';
+
+// Deprecated: kept for one major version, translated to the official metadata
+export { Can } from './decorator/can.decorator.js';
+export type { CanOptions } from './decorator/can.decorator.js';
+export { Policy } from './decorator/policy.decorator.js';
+
+// RBAC seams
+export { AuthzRbac } from './rbac.js';
 export type { PermissionProvider } from './permission-provider.js';
-export type {
-  DecisionProvider,
-  DecisionRequest,
-  DecisionVerdict,
-} from './decision-provider.js';
 export { defaultRoleResolver } from './role-provider.js';
 export type { RoleProvider, RoleResolver } from './role-provider.js';
 export {
@@ -42,6 +73,39 @@ export {
   permissionMatches,
   permissionSatisfied,
 } from './permission-matcher.js';
+export { PermissionCache } from './permission-cache.js';
+
+// External decision point (Cerbos adapter: `@dudousxd/nestjs-authz/cerbos`)
+export { normalizeVerdict } from './decision-provider.js';
+export type {
+  DecisionProvider,
+  DecisionRequest,
+  DecisionVerdict,
+} from './decision-provider.js';
+
+// Decisions
+export { authzDecisionChannel, publishAuthzDecision } from './diagnostics.js';
+export type {
+  AuthzDecisionDiagnostic,
+  AuthzDecisionReason,
+  AuthzDecisionSource,
+} from './diagnostics.js';
+export { AuthzDecisionPublisher } from './decisions.js';
+
+// Client endpoint
+export { createCanController, DEFAULT_CAN_ENDPOINT_PATH } from './can-endpoint.controller.js';
+export type {
+  CanRequestBody,
+  CanResponseBody,
+  CanBatchRequestBody,
+  CanBatchResultItem,
+} from './can-endpoint.controller.js';
+
+export { IdParamResourceResolver } from './resource-resolver.js';
+export type { ResourceResolver, ResourceResolveHints } from './resource-resolver.js';
+export type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
+
+// Query scoping
 export {
   and,
   eq,
@@ -64,6 +128,7 @@ export type {
   ScopeOperator,
   ScopeResult,
 } from './scope.js';
+
 export {
   AUTHZ_MODULE_OPTIONS,
   RESOURCE_RESOLVER,
@@ -73,25 +138,17 @@ export {
   PERMISSION_PROVIDER,
   ROLE_PROVIDER,
   POLICY_RESOURCE_METADATA,
-  CAN_METADATA,
-  ROLES_METADATA,
 } from './tokens.js';
 export {
   AuthzException,
-  PolicyNotDecoratedException,
   AbilityNotResolvedException,
   AmbiguousAbilityException,
-  ResourceResolverMissingException,
 } from './errors/exceptions.js';
 export type {
-  AfterHook,
   AuthzModuleOptions,
   AuthzModuleAsyncOptions,
   AuthzModuleOptionsFactory,
   GateFn,
-  PolicyBeforeHook,
-  PolicyInstance,
-  PolicyMethod,
   PolicyResponse,
   PolicyResult,
   Resource,

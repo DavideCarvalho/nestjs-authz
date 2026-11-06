@@ -22,14 +22,8 @@ export const RESOURCE_RESOLVER = capability('authz', 'resource-resolver');
  */
 export const RESOURCE_HYDRATOR = capability('authz', 'resource-hydrator');
 
-/** Metadata key for `@Policy(Resource)` — stores the resource class on the policy. */
-export const POLICY_RESOURCE_METADATA = 'nestjs-authz:policy-resource';
-
-/** Metadata key for `@Can(ability, Resource?)` — stores the ability descriptor on a route. */
-export const CAN_METADATA = 'nestjs-authz:can';
-
-/** Metadata key for `@Roles(...roles)` — stores the allowed role names on a route. */
-export const ROLES_METADATA = 'nestjs-authz:roles';
+/** Metadata key of the `@PolicyFor(Resource)` link on a policy class. */
+export { POLICY_RESOURCE_METADATA } from './links.js';
 
 /**
  * Cross-lib injection token for an optional {@link PermissionProvider} — the seam the

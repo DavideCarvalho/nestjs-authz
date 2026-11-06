@@ -13,9 +13,10 @@ import type { Resource, User } from './types.js';
 export const authzDecisionChannel = getChannel('authz', 'decision');
 
 /**
- * Every authorization decision the {@link Gate} reaches, published once per
- * `allows`/`authorize`/`denies` call. `reason` names which resolution path
- * produced the verdict so a 403 is debuggable.
+ * Every authorization decision, allowed or denied: each `Gate` check, and each official
+ * `@Can()` requirement the guard enforced (`reason: 'route'`). The official package
+ * publishes only denials, on `nestjs:authorization:denied`; this channel carries both,
+ * for Telescope-style watchers.
  */
 export interface AuthzDecisionDiagnostic {
   v: 1;
@@ -25,6 +26,10 @@ export interface AuthzDecisionDiagnostic {
   allowed: boolean;
   /** Which resolution path decided it (see {@link AuthzDecisionReason}). */
   reason: AuthzDecisionReason;
+  /** The official policy class that decided, e.g. `'PostPolicy'`, or `null` when none did. */
+  policy: string | null;
+  /** The handler the official guard checked (`Class.method`), or `null` for a `Gate` call. */
+  handler: string | null;
   /** A label for the resolved user (`<type>#<id>` / constructor name), or `null` when anonymous. */
   userRef: string | null;
   /** The resource class name the ability targeted, or `null` for a model-less ability. */
@@ -38,11 +43,16 @@ export type AuthzDecisionReason =
   | 'super-admin'
   | 'decision-provider'
   | 'permission-provider'
-  | 'policy-before'
   | 'policy'
   | 'gate'
-  | 'after'
-  | 'anonymous';
+  | 'anonymous'
+  | 'route';
+
+/** Where a decision came from, beyond the verdict. */
+export interface AuthzDecisionSource {
+  policy?: string | null;
+  handler?: string | null;
+}
 
 /**
  * Publish a decision to the channel, but only when something is listening. Never
@@ -54,6 +64,7 @@ export function publishAuthzDecision(
   reason: AuthzDecisionReason,
   user: User,
   resource: Resource | undefined,
+  source: AuthzDecisionSource = {},
 ): void {
   if (!authzDecisionChannel.hasSubscribers) return;
   const payload: AuthzDecisionDiagnostic = {
@@ -61,6 +72,8 @@ export function publishAuthzDecision(
     ability,
     allowed,
     reason,
+    policy: source.policy ?? null,
+    handler: source.handler ?? null,
     userRef: labelUser(user),
     resourceType: resourceType(resource),
     resourceId: resourceId(resource),

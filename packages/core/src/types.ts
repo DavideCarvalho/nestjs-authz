@@ -2,222 +2,79 @@ import type { Type } from '@nestjs/common';
 import type { UserRef } from './context-accessor.js';
 import type { ResourceResolver } from './resource-resolver.js';
 
-/**
- * A resource instance passed to policy methods. `unknown` because authz never
- * inspects the resource itself — the policy method does.
- */
+/** A resource passed to a policy ability. authz never inspects it; the policy does. */
 export type Resource = object;
 
 /**
- * The current user as seen by a policy/gate. authz does not model the user; it
- * is whatever the app's auth layer produced (or `undefined` when unauthenticated).
+ * The user a policy or gate sees: whatever authentication produced, `null` for a
+ * guest. authz does not model it.
  */
 export type User = unknown;
 
 /**
- * The richer result a policy method / ad-hoc gate may return instead of a bare
- * boolean: a verdict plus an optional human-readable `message` explaining a denial.
- * The message is surfaced on the thrown `ForbiddenException` (so a 403 is debuggable)
- * and published on the diagnostics decision. Returning a bare boolean is unchanged.
- *
- * Mirrors Laravel's `Response::allow()/deny('message')`.
+ * A verdict with an optional reason. What a {@link DecisionProvider} may answer instead of
+ * a bare boolean; the `message` is published on the decision event.
  */
 export interface PolicyResponse {
   allowed: boolean;
   message?: string;
 }
 
-/**
- * What a policy method / gate / hook may return: a bare boolean (unchanged) or the
- * richer {@link PolicyResponse}. Hooks additionally allow `void`/`undefined` to mean
- * "no opinion — fall through".
- */
+/** A bare boolean or a {@link PolicyResponse}. */
 export type PolicyResult = boolean | PolicyResponse;
 
-/**
- * A policy method: decides a single ability for a `(user, resource?)` pair.
- * Class-level abilities (e.g. `create`) omit the resource. May be async. May return
- * a bare boolean (unchanged) or a richer {@link PolicyResponse} with a deny message.
- */
-export type PolicyMethod = (
-  user: User,
-  resource?: Resource,
-) => PolicyResult | Promise<PolicyResult>;
+/** An ad-hoc, model-less gate registered with `gate.define(name, fn)`. */
+export type GateFn = (user: User, resource?: Resource) => boolean | Promise<boolean>;
 
 /**
- * Optional per-policy `before` hook. Runs before the ability method.
- * - return `true`  → allow (short-circuit)
- * - return `false` → deny (short-circuit)
- * - return `void`/`undefined` → fall through to the ability method
- */
-export type PolicyBeforeHook = (
-  user: User,
-  ability: string,
-) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
-
-/** A policy instance is an arbitrary object whose methods are abilities. */
-export type PolicyInstance = Record<string, unknown> & {
-  before?: PolicyBeforeHook;
-};
-
-/**
- * An ad-hoc gate: a model-less ability resolved by name via `gate.define`.
- * May return a bare boolean (unchanged) or a richer {@link PolicyResponse}.
- */
-export type GateFn = (user: User, resource?: Resource) => PolicyResult | Promise<PolicyResult>;
-
-/**
- * Global `after` hook. Mirrors Laravel's `Gate::after()`: runs AFTER policy/gate
- * resolution and may observe or override the decision.
- *
- * `result` is the verdict produced by the policy/gate (`true`/`false`), or
- * `undefined` when the policy/gate returned a nullish value (it had "no opinion").
- *
- * Override semantics (Laravel-idiomatic): the hook's return value REPLACES the
- * decision ONLY when the policy/gate produced no explicit verdict (`result` is
- * `undefined`). When the policy/gate DID decide (returned a boolean), `after` is
- * purely an observer and its return value is ignored — so it can never silently
- * overturn an explicit allow/deny. Returning `void`/`undefined` always leaves the
- * decision untouched. Like a policy, it may return a {@link PolicyResponse} to
- * attach a deny message.
- */
-export type AfterHook = (
-  user: User,
-  ability: string,
-  result: boolean | undefined,
-  resource?: Resource,
-) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
-
-/**
- * A resource loader: turns an `id` into the REAL entity instance for a resource
- * `type`. Used by the opt-in `POST /authz/can` endpoint to rehydrate the client's
- * `{ type, id }` shim before authorizing, so an instance-bound `@Policy` matches by
- * constructor. Returning nullish signals "not found" (the endpoint denies). May be async.
- */
-export type ResourceLoader = (id: string | number) => unknown | Promise<unknown>;
-
-/**
- * Resource loaders keyed by the resource `type` name as emitted by the client/codegen
- * (e.g. `'Post'`). See {@link AuthzModuleOptions.resourceLoaders}.
- */
-export type ResourceLoaderMap = Record<string, ResourceLoader>;
-
-/**
- * Global super-admin before-hook. Runs before any policy/gate; truthy → allow.
- * `void`/`undefined`/`false` falls through to normal resolution.
+ * The global super-admin hook. `true` grants any check; anything else falls through.
+ * Policies honor it when they extend `AuthzPolicy` (or call `superAdminBefore` from
+ * their `before()`); `RolePolicy` and `PermissionPolicy` do. The `Gate`'s string
+ * abilities and `gate.scope()` ask it first.
  */
 export type SuperAdminHook = (
   user: User,
   ability: string,
   /**
-   * The dispatch target: the resource instance/class of a single check, or the scoped entity
-   * class for `gate.scope(...)`. `undefined` for a model-less ability.
+   * What the check targets: the resource of a single check (the policy's first
+   * argument), or the entity class for `gate.scope(...)`. `undefined` for a model-less
+   * ability. Lets the hook scope the bypass (e.g. to one tenant's resources).
    */
   resource?: Resource,
-) => PolicyResult | undefined | Promise<PolicyResult | undefined>;
+) => boolean | null | undefined | Promise<boolean | null | undefined>;
+
+/** Loads the real entity for a client `{ type, id }` reference (the `POST /authz/can` endpoint). */
+export type ResourceLoader = (id: string | number) => unknown | Promise<unknown>;
+
+/** Resource loaders keyed by the resource `type` name the client sends (e.g. `'Post'`). */
+export type ResourceLoaderMap = Record<string, ResourceLoader>;
 
 export interface AuthzModuleOptions {
-  /**
-   * Policy classes to register explicitly. Each must be decorated with
-   * `@Policy(Resource)`. Auto-discovery of `@Policy` providers also works, so
-   * this is optional.
-   */
-  policies?: Array<Type<PolicyInstance>>;
-  /**
-   * Global super-admin before-hook applied to every authorization check. Return
-   * `true` to grant (e.g. super-admins). Returning `void`/`false` falls through.
-   *
-   * ⚠️ IMPORTANT — what `user` is: on the **context path** (no `forUser`), the
-   * `user` passed here is the raw {@link UserRef} from nestjs-context — just
-   * `{ type, id }`, NOT your hydrated user entity. So `superAdmin: u => u.isAdmin`
-   * will NOT fire from a route/`gate.allows(...)` unless you also configure
-   * {@link AuthzModuleOptions.resolveUser} to hydrate the full entity. On the
-   * explicit `gate.forUser(entity)` path you receive exactly what you passed.
-   */
+  /** The global super-admin hook. See {@link SuperAdminHook}. */
   superAdmin?: SuperAdminHook;
   /**
-   * Global `after` hook (Laravel's `Gate::after()`). Runs AFTER policy/gate
-   * resolution and may observe or override the decision. It can only OVERRIDE the
-   * verdict when the policy/gate produced no explicit result (returned nullish);
-   * when the policy/gate decided explicitly, `after` is observe-only and its return
-   * value is ignored. Returning `void`/`undefined` always leaves the decision
-   * untouched. See {@link AfterHook}.
-   *
-   * Receives the same (possibly un-hydrated) `user` as {@link superAdmin} on the
-   * context path — apply {@link resolveUser} if you need the full entity.
-   */
-  after?: AfterHook;
-  /**
-   * Optional hook to hydrate the full user entity from the context's
-   * {@link UserRef} (`{ type, id }`) before policies / `before` / `superAdmin`
-   * run. WITHOUT this hook, the context path passes only `{ type, id }` to those
-   * functions (it does not load your `User` row), so property checks such as
-   * `superAdmin: u => u.isAdmin` or `post.authorId === user.id` against a real
-   * column will not see hydrated fields. Provide `resolveUser` to load the entity
-   * (e.g. from your ORM) keyed by the ref. Returning `undefined` is treated as
-   * "no user" (deny path), identical to an anonymous request. Within one request
-   * (nestjs-context store) the hook runs once per `type:id`; every later check
-   * reuses that result.
-   *
-   * Only affects the context path; `gate.forUser(entity)` always uses the value
-   * you pass directly and never invokes this hook.
+   * Hydrates the full user from nestjs-context's `{ type, id }` ref for `Gate` calls
+   * made without a user (`gate.allows(...)` rather than `gate.forUser(user)`), when
+   * `@nestjs/authentication`'s `AuthenticationContext` has no user to offer. Runs once
+   * per `type:id` per request (nestjs-context store). Routes never use it: the official
+   * guard reads the user with its own `getUser`.
    */
   resolveUser?: (ref: UserRef) => User | undefined | Promise<User | undefined>;
   /**
-   * Override the default {@link RoleResolver} used by coarse role-checks
-   * (`gate.hasRole('teacher')`, `@Roles('admin')`). The default reads `user.roles`
-   * (`string[]`) OR `user.role` (`string | string[]`) off the user object, so
-   * role-checks work with ZERO RBAC tables. Provide this to derive roles from a
-   * different shape. When the optional `ROLE_PROVIDER` seam is ALSO registered, the
-   * Gate unions both sources' roles.
-   *
-   * On the context path the resolver receives whatever the context produced (the
-   * raw {@link UserRef} unless `resolveUser` hydrated the entity); on the explicit
-   * `gate.forUser(entity)` path it receives exactly what you passed.
+   * Derives roles from the user object. Default: `user.roles` (`string[]`) or
+   * `user.role` (`string | string[]`). Unioned with the RBAC adapter's role store.
    */
   resolveRoles?: (user: User) => string[] | undefined | Promise<string[] | undefined>;
-  /**
-   * Override the default {@link ResourceResolver} used to load an instance for
-   * `@Can(ability, Resource)` routes. Defaults to {@link IdParamResourceResolver}
-   * (reads the route `:id` param), registered automatically by `forRoot`. Apps
-   * needing real ORM entities provide their own here (or bind the
-   * `RESOURCE_RESOLVER` token directly).
-   */
+  /** Loads the resource for `byId(Resource)`. Default: {@link IdParamResourceResolver}. */
   resourceResolver?: ResourceResolver;
-  /**
-   * Route param name the default {@link IdParamResourceResolver} reads to build
-   * the resource shim. Defaults to `'id'`. Ignored when {@link resourceResolver}
-   * is supplied.
-   */
+  /** Route param the default resolver reads. Default `'id'`. */
   idParam?: string;
   /**
-   * Opt-in `POST /authz/can` fallback endpoint. **Off by default.** When enabled,
-   * registers a controller that runs `gate.allows(ability, resource?)` for the
-   * current (context) user and returns `{ allowed: boolean }`. This is the
-   * last-resort path the codegen-emitted `can()` helper targets.
-   *
-   * - `true` → mount at the default path `authz/can`.
-   * - `string` → mount at that path (e.g. `'api/authz/can'`).
-   * - `false`/omitted → no endpoint is registered.
-   *
-   * Prefer the no-request paths (shared Inertia props, per-resource `can` maps)
-   * — this endpoint exists only for abilities not already hydrated on the client.
+   * Opt-in `POST /authz/can` endpoint for client checks that are not hydrated. `true`
+   * mounts it at `authz/can`; a string at that path. Off by default.
    */
   canEndpoint?: boolean | string;
-  /**
-   * Resource loaders keyed by the resource `type` name the client/codegen emits
-   * (e.g. `'Post'`). They close the per-instance gap in the {@link canEndpoint}
-   * fallback: when the endpoint receives `{ ability, resource: { type, id } }` and a
-   * loader is registered for `type`, it `await`s `loader(id)` and authorizes the REAL
-   * entity — so an instance-bound `@Policy` matches by constructor and its method runs
-   * with the loaded resource. A loader returning nullish is treated as "not found"
-   * (the endpoint denies). Types WITHOUT a loader keep the prior behavior (class-level
-   * / ad-hoc only; a resource-bound ability still denies). Opt-in: unset → unchanged.
-   *
-   * ```ts
-   * resourceLoaders: { Post: (id) => postRepo.findOneBy({ id: Number(id) }) }
-   * ```
-   */
+  /** Loaders that turn the endpoint's `{ type, id }` into the real entity, keyed by type. */
   resourceLoaders?: ResourceLoaderMap;
 }
 
@@ -231,17 +88,8 @@ export interface AuthzModuleAsyncOptions {
   useClass?: Type<AuthzModuleOptionsFactory>;
   useFactory?: (...args: unknown[]) => Promise<AuthzModuleOptions> | AuthzModuleOptions;
   inject?: unknown[];
-  /**
-   * Opt-in `POST /authz/can` fallback endpoint (see {@link AuthzModuleOptions.canEndpoint}).
-   * Declared statically here because controllers are registered at module-definition
-   * time, before the async options factory resolves. Off by default.
-   */
+  /** See {@link AuthzModuleOptions.canEndpoint}. Static: controllers are registered before the factory runs. */
   canEndpoint?: boolean | string;
-  /**
-   * Resource loaders for the {@link canEndpoint} fallback
-   * (see {@link AuthzModuleOptions.resourceLoaders}). May also be returned from the
-   * async options factory; either way the endpoint reads them from the resolved
-   * options, so this declaration is for the rarer case of supplying them statically.
-   */
+  /** See {@link AuthzModuleOptions.resourceLoaders}. */
   resourceLoaders?: ResourceLoaderMap;
 }

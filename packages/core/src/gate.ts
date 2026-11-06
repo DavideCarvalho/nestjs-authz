@@ -1,15 +1,12 @@
-import { InjectCapability } from '@dudousxd/nestjs-diagnostics/nestjs';
-import { ForbiddenException, Inject, Injectable, Optional, type Type } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
-import type { ContextAccessor, ContextStore, UserRef } from './context-accessor.js';
-import type { DecisionProvider, DecisionVerdict } from './decision-provider.js';
+import { type Ability, AuthorizationError, AuthorizationService } from '@nestjs/authorization';
+import { Inject, Injectable, Optional, type Type } from '@nestjs/common';
+import { type DecisionVerdict, normalizeVerdict } from './decision-provider.js';
 import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js';
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
+import { isOfficialPolicy } from './official.js';
 import { PermissionCache } from './permission-cache.js';
-import { permissionSatisfied } from './permission-matcher.js';
-import type { PermissionProvider } from './permission-provider.js';
-import { PolicyRegistry } from './policy-registry.js';
-import { type RoleProvider, type RoleResolver, defaultRoleResolver } from './role-provider.js';
+import { PolicyIndex } from './policy-index.js';
+import { AuthzRbac } from './rbac.js';
 import {
   type ScopeConstraint,
   type ScopeMethod,
@@ -17,267 +14,83 @@ import {
   scopeAll,
   scopeNone,
 } from './scope.js';
-import {
-  AUTHZ_MODULE_OPTIONS,
-  CONTEXT_ACCESSOR,
-  DECISION_PROVIDER,
-  PERMISSION_PROVIDER,
-  ROLE_PROVIDER,
-} from './tokens.js';
-import type {
-  AfterHook,
-  AuthzModuleOptions,
-  GateFn,
-  PolicyBeforeHook,
-  PolicyInstance,
-  PolicyResult,
-  Resource,
-  SuperAdminHook,
-  User,
-} from './types.js';
+import { AUTHZ_MODULE_OPTIONS } from './tokens.js';
+import type { AuthzModuleOptions, GateFn, Resource, SuperAdminHook, User } from './types.js';
 
-/**
- * A normalized hook/policy return: an explicit verdict (or `undefined` = "no
- * opinion / fall through") plus an optional deny message. Bare booleans, the
- * richer `{ allowed, message }` shape, and nullish all map here.
- */
-interface NormalizedResult {
-  allowed: boolean | undefined;
-  message?: string;
-}
+/** The arguments after the user of ability `A` on policy `P`. */
+export type AbilityArgsOf<P, A extends keyof P> = P[A] extends (
+  user: never,
+  ...args: infer R
+) => unknown
+  ? R
+  : never;
 
-/** Normalize a `boolean | PolicyResponse | null | undefined` into a {@link NormalizedResult}. */
-function normalizeResult(value: PolicyResult | undefined): NormalizedResult {
-  if (value == null) return { allowed: undefined };
-  if (typeof value === 'boolean') return { allowed: value };
-  // `exactOptionalPropertyTypes`: only attach `message` when actually present.
-  return value.message === undefined
-    ? { allowed: Boolean(value.allowed) }
-    : { allowed: Boolean(value.allowed), message: value.message };
-}
-
-/**
- * Attach `message` to a decision only when defined (honors `exactOptionalPropertyTypes`,
- * which forbids an explicit `message: undefined` on an optional property).
- */
-function withMessage<T extends { reason: AuthzDecisionReason; allowed: boolean | undefined }>(
-  decision: T,
-  message: string | undefined,
-): T & { message?: string } {
-  return message === undefined ? decision : { ...decision, message };
-}
-
-/**
- * Build the `ForbiddenException` for a denied `authorize(...)`, surfacing the
- * decision's `reason` (and the policy/hook `message` when present) instead of
- * discarding it. The message string defaults to the generic `Unauthorized: <ability>`
- * for backward compatibility; the structured body carries `ability` + `reason` so a
- * 403 is debuggable by clients and the diagnostics watcher alike.
- */
-function forbidden(
-  ability: string,
-  decision: { reason: AuthzDecisionReason; message?: string },
-): ForbiddenException {
-  const message = decision.message ?? `Unauthorized: ${ability}`;
-  return new ForbiddenException({
-    statusCode: 403,
-    error: 'Forbidden',
-    message,
-    ability,
-    reason: decision.reason,
-  });
-}
-
-// A sentinel marking "no user resolved" distinct from a legitimately-`undefined`
-// user. `forUser(undefined)` explicitly authorizes an anonymous user.
-const NO_USER = Symbol('authz:no-user');
-type MaybeUser = User | typeof NO_USER;
-
-/**
- * Key under which the per-request {@link PermissionCache} is stashed on the
- * nestjs-context store. `Symbol.for` so the same key resolves across copies of
- * this module (e.g. multiple installs in a monorepo) sharing one store.
- */
-const REQUEST_PERMISSION_CACHE = Symbol.for('@dudousxd/nestjs-authz:request-permission-cache');
-
-/** Key under which the per-request `resolveUser` results are stashed on the context store. */
-const REQUEST_USERS = Symbol.for('@dudousxd/nestjs-authz:request-users');
-
-/** A single item in a {@link Gate.allowsMany} batch. */
+/** A string ability, optionally on a resource (instance, or class for class-level abilities). */
 export interface BatchAbility {
   ability: string;
   resource?: Resource;
 }
 
-/** A single result from a {@link Gate.allowsMany} batch: the input plus its verdict. */
-export interface BatchResult {
+/** An official policy check: `policy[ability](user, ...args)`. */
+export interface BatchPolicyCheck {
+  policy: Type<unknown>;
   ability: string;
-  resource?: Resource;
-  allowed: boolean;
+  args?: readonly unknown[];
 }
 
+/** One item of a {@link Gate.allowsMany} batch. */
+export type BatchItem = BatchAbility | BatchPolicyCheck;
+
+/** One result of a {@link Gate.allowsMany} batch: the item plus its verdict. */
+export type BatchResult = BatchItem & { allowed: boolean };
+
+interface Decision {
+  allowed: boolean;
+  reason: AuthzDecisionReason;
+  policy: string | null;
+}
+
+/** A verdict the external decision point already gave for a batch item. */
+interface Prefetched {
+  verdict: DecisionVerdict;
+}
+
+const isPolicyCheck = (item: BatchItem): item is BatchPolicyCheck =>
+  typeof (item as BatchPolicyCheck).policy === 'function';
+
 /**
- * Laravel-style authorization Gate.
+ * A façade over the official `AuthorizationService` for service-layer checks, with what
+ * the official service does not have:
  *
- * Resolves an ability against either a registered `@Policy` method (by ability
- * name, matched against the resource's policy) or an ad-hoc gate defined via
- * {@link define}. Applies the global `superAdmin` before-hook and the per-policy
- * `before` hook with short-circuit semantics.
+ * - **string abilities**, Laravel-style: `gate.allows('update', post)` finds the policy
+ *   linked to `Post` with `@PolicyFor(Post)`; `gate.allows('access-admin')` runs an
+ *   ad-hoc gate from {@link define}; `gate.allows('posts.publish')` asks the persisted
+ *   permissions. Asks `superAdmin` first, then the external decision point
+ *   (`DECISION_PROVIDER`), then the policy — which has the final word: a persisted
+ *   permission named like the ability does not bypass it — then the persisted
+ *   permissions, then the ad-hoc gate.
+ * - **official policy checks**: `gate.allows(PostPolicy, 'update', post)`, exactly
+ *   `AuthorizationService.can()`.
+ * - **batches** ({@link allowsMany}) sharing one permission fetch, **query scopes**
+ *   ({@link scope}), **roles** ({@link hasRole}), an allow+deny decision event, and an
+ *   ambient user when none is passed ({@link forUser} passes one): `@nestjs/authentication`'s
+ *   `AuthenticationContext.user` when that package is installed, else nestjs-context's.
  *
- * The current user comes from the optional {@link ContextAccessor} (nestjs-context)
- * when present, or is supplied explicitly via {@link forUser}.
+ * Every policy decision is the official service's: the policy's own `before()`, then
+ * the ability, allowed only on a literal `true`.
  */
 @Injectable()
 export class Gate {
   private readonly gates = new Map<string, GateFn>();
   private readonly superAdmin: SuperAdminHook | undefined;
-  private readonly after: AfterHook | undefined;
-  private readonly resolveUser: AuthzModuleOptions['resolveUser'];
-  private readonly roleResolver: RoleResolver;
-
-  // Memoized ModuleRef seam lookups. These tokens are singletons bound once at
-  // module init, so the (potentially throwing) non-strict container scan only
-  // needs to run once per seam — never on every authorization check.
-  private contextResolved = false;
-  private contextCached: ContextAccessor | undefined;
-  private permissionProviderResolved = false;
-  private permissionProviderCached: PermissionProvider | undefined;
-  private roleProviderResolved = false;
-  private roleProviderCached: RoleProvider | undefined;
-  private decisionProviderResolved = false;
-  private decisionProviderCached: DecisionProvider | undefined;
 
   constructor(
-    private readonly policies: PolicyRegistry,
-    @Optional()
-    @Inject(AUTHZ_MODULE_OPTIONS)
-    options: AuthzModuleOptions | undefined,
-    @InjectCapability('context', 'accessor')
-    private readonly context?: ContextAccessor,
-    @Optional()
-    private readonly moduleRef?: ModuleRef,
-    @Optional()
-    @Inject(PERMISSION_PROVIDER)
-    private readonly permissionProvider?: PermissionProvider,
-    @Optional()
-    @Inject(ROLE_PROVIDER)
-    private readonly roleProvider?: RoleProvider,
-    @Optional()
-    @Inject(DECISION_PROVIDER)
-    private readonly decisionProvider?: DecisionProvider,
+    private readonly authz: AuthorizationService,
+    private readonly index: PolicyIndex,
+    private readonly rbac: AuthzRbac,
+    @Optional() @Inject(AUTHZ_MODULE_OPTIONS) options?: AuthzModuleOptions,
   ) {
     this.superAdmin = options?.superAdmin;
-    this.after = options?.after;
-    this.resolveUser = options?.resolveUser;
-    this.roleResolver = options?.resolveRoles ?? defaultRoleResolver;
-  }
-
-  /**
-   * Locate the context accessor. Prefers the value injected into this module;
-   * falls back to a non-strict {@link ModuleRef} lookup so an accessor provided
-   * by ANY module (e.g. a global ContextModule, or the app root) is still found.
-   */
-  private resolveContext(): ContextAccessor | undefined {
-    if (this.context) return this.context;
-    if (this.contextResolved) return this.contextCached;
-    this.contextResolved = true;
-    if (!this.moduleRef) return this.contextCached;
-    try {
-      this.contextCached = this.moduleRef.get<ContextAccessor>(CONTEXT_ACCESSOR, { strict: false });
-    } catch {
-      this.contextCached = undefined;
-    }
-    return this.contextCached;
-  }
-
-  /**
-   * Locate the optional {@link PermissionProvider} (the RBAC seam). Prefers the value
-   * injected into this module; falls back to a non-strict {@link ModuleRef} lookup so a
-   * provider registered by ANY module (e.g. the RBAC adapter's global module) is found.
-   */
-  private resolvePermissionProvider(): PermissionProvider | undefined {
-    if (this.permissionProvider) return this.permissionProvider;
-    if (this.permissionProviderResolved) return this.permissionProviderCached;
-    this.permissionProviderResolved = true;
-    if (!this.moduleRef) return this.permissionProviderCached;
-    try {
-      this.permissionProviderCached = this.moduleRef.get<PermissionProvider>(PERMISSION_PROVIDER, {
-        strict: false,
-      });
-    } catch {
-      this.permissionProviderCached = undefined;
-    }
-    return this.permissionProviderCached;
-  }
-
-  /**
-   * Locate the optional {@link RoleProvider} (the coarse role seam). Prefers the value
-   * injected into this module; falls back to a non-strict {@link ModuleRef} lookup so a
-   * provider registered by ANY module (e.g. the RBAC adapter's global module) is found.
-   */
-  private resolveRoleProvider(): RoleProvider | undefined {
-    if (this.roleProvider) return this.roleProvider;
-    if (this.roleProviderResolved) return this.roleProviderCached;
-    this.roleProviderResolved = true;
-    if (!this.moduleRef) return this.roleProviderCached;
-    try {
-      this.roleProviderCached = this.moduleRef.get<RoleProvider>(ROLE_PROVIDER, { strict: false });
-    } catch {
-      this.roleProviderCached = undefined;
-    }
-    return this.roleProviderCached;
-  }
-
-  /**
-   * Locate the optional {@link DecisionProvider} (the external-PDP seam). Same lookup strategy as
-   * {@link resolvePermissionProvider}: injected value first, then a memoized non-strict scan.
-   */
-  private resolveDecisionProvider(): DecisionProvider | undefined {
-    if (this.decisionProvider) return this.decisionProvider;
-    if (this.decisionProviderResolved) return this.decisionProviderCached;
-    this.decisionProviderResolved = true;
-    if (!this.moduleRef) return this.decisionProviderCached;
-    try {
-      this.decisionProviderCached = this.moduleRef.get<DecisionProvider>(DECISION_PROVIDER, {
-        strict: false,
-      });
-    } catch {
-      this.decisionProviderCached = undefined;
-    }
-    return this.decisionProviderCached;
-  }
-
-  /**
-   * The per-request {@link PermissionCache}, stashed on the nestjs-context store so
-   * every check within one HTTP request shares a single `getPermissions` fetch
-   * (kills the N+1 a list page would otherwise cause). Returns `undefined` when no
-   * context store is available (standalone use), in which case callers fall back to
-   * a transient cache (e.g. one per `allowsMany` batch) or no memoization.
-   */
-  private resolveRequestCache(): PermissionCache | undefined {
-    const store = this.requestStore();
-    if (!store) return undefined;
-    const existing = store[REQUEST_PERMISSION_CACHE];
-    if (existing instanceof PermissionCache) return existing;
-    const cache = new PermissionCache();
-    store[REQUEST_PERMISSION_CACHE] = cache;
-    return cache;
-  }
-
-  /** The nestjs-context store for the current request, or `undefined` when there is none. */
-  private requestStore(): Record<symbol, unknown> | undefined {
-    const context = this.resolveContext();
-    // `get()` is part of the ContextAccessor contract but a stub/partial accessor
-    // may omit it (or it may throw outside a request scope) — degrade to "no
-    // request cache" rather than failing the check.
-    if (!context || typeof context.get !== 'function') return undefined;
-    let store: ContextStore | undefined;
-    try {
-      store = context.get();
-    } catch {
-      store = undefined;
-    }
-    return store as Record<symbol, unknown> | undefined;
   }
 
   /** Register an ad-hoc, model-less gate resolved by `ability` name. */
@@ -291,587 +104,371 @@ export class Gate {
     return this.gates.has(ability);
   }
 
-  /**
-   * Names of every ad-hoc gate registered via {@link define}. Used by integrations
-   * (e.g. `@dudousxd/nestjs-authz-inertia`) that enumerate the user's class-level
-   * abilities to share them as Inertia props — no network round-trip needed.
-   */
+  /** Names of every ad-hoc gate registered with {@link define}. */
   gateNames(): string[] {
     return [...this.gates.keys()];
   }
 
   /**
-   * Bind an explicit user, bypassing the context accessor. Use when no
-   * nestjs-context is wired, or to check a user other than the current one.
-   *
-   * A nullish user (`forUser(undefined)` / `forUser(null)`) is an explicit
-   * anonymous request: it maps to the same deny path as an unauthenticated
-   * context (`NO_USER`), so policies/gates are never invoked with `undefined` and
-   * never throw. The `resolveUser` hook is NOT applied to `forUser` — the value
-   * you pass is used verbatim.
+   * Bind an explicit user. `null`/`undefined` is a guest. The usual way to check in a
+   * service: pass the user your handler received.
    */
   forUser(user: User): BoundGate {
-    return new BoundGate(this, user == null ? NO_USER : user);
+    return new BoundGate(this, user ?? null);
   }
 
   /**
-   * Resolve the current user from the context accessor, or `NO_USER`.
-   * When a `resolveUser` hook is configured, hydrate the full entity from the
-   * context's {@link UserRef}; a hook returning nullish maps to `NO_USER`. The
-   * hydrated user is memoized on the request's context store by `type:id`, so the
-   * hook runs once per request rather than once per check.
+   * The ambient user, for calls without {@link forUser}: `@nestjs/authentication`'s
+   * `AuthenticationContext.user` when that optional peer is installed and has one, else
+   * nestjs-context's user ref (hydrated by `resolveUser` when configured, once per
+   * request). `null` without either.
    */
-  private async currentUser(): Promise<MaybeUser> {
-    const context = this.resolveContext();
-    if (!context) return NO_USER;
-    const ref = context.userRef();
-    if (ref === undefined) return NO_USER;
-    const resolveUser = this.resolveUser;
-    if (!resolveUser) return ref;
-    const hydrate = async (): Promise<MaybeUser> => {
-      const hydrated = await resolveUser(ref as UserRef);
-      return hydrated == null ? NO_USER : hydrated;
-    };
-    const store = this.requestStore();
-    if (!store) return hydrate();
-    let users = store[REQUEST_USERS] as Map<string, Promise<MaybeUser>> | undefined;
-    if (!(users instanceof Map)) {
-      users = new Map();
-      store[REQUEST_USERS] = users;
-    }
-    const key = `${ref.type}:${typeof ref.id}:${ref.id}`;
-    const cached = users.get(key);
-    if (cached) return cached;
-    const pending = hydrate();
-    users.set(key, pending);
-    pending.catch(() => users.delete(key));
-    return pending;
+  private currentUser(): Promise<User> {
+    return this.rbac.currentUser();
   }
 
-  // --- public API (operates on the current/context user) ---
+  // --- current (ambient) user ---
 
-  async allows(ability: string, resource?: Resource): Promise<boolean> {
-    return this.check(await this.currentUser(), ability, resource, this.resolveRequestCache());
+  allows<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<boolean>;
+  allows(ability: string, resource?: Resource): Promise<boolean>;
+  async allows(first: string | Type<unknown>, ...rest: unknown[]): Promise<boolean> {
+    return this.allowsFor(await this.currentUser(), first, rest);
   }
 
-  async denies(ability: string, resource?: Resource): Promise<boolean> {
-    return !(await this.allows(ability, resource));
-  }
-
-  async authorize(ability: string, resource?: Resource): Promise<void> {
-    const decision = await this.decide(
-      await this.currentUser(),
-      ability,
-      resource,
-      this.resolveRequestCache(),
-    );
-    if (!decision.allowed) throw forbidden(ability, decision);
+  denies<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<boolean>;
+  denies(ability: string, resource?: Resource): Promise<boolean>;
+  async denies(first: string | Type<unknown>, ...rest: unknown[]): Promise<boolean> {
+    return !(await this.allowsFor(await this.currentUser(), first, rest));
   }
 
   /**
-   * Authorize MANY abilities for the current (context) user in a single pass. The
-   * user is resolved ONCE and a single {@link PermissionCache} is shared across all
-   * items, so a list page (N cards) costs one user resolution + at most one
-   * permission fetch instead of N of each. Order is preserved; each result echoes
-   * its input `ability`/`resource` plus the `allowed` verdict.
-   *
-   * Fault-isolating: an item whose ability is unresolved/ambiguous denies just
-   * THAT item (it does not throw and abort the batch) — a batch is a best-effort
-   * verdict list, not an enforcement gate.
+   * Like {@link allows}, but throws the official `AuthorizationError` on a denial, which
+   * the official module turns into a 401/403 (or the transport's error) when it leaves
+   * a handler.
    */
-  async allowsMany(items: BatchAbility[]): Promise<BatchResult[]> {
-    return this.checkMany(await this.currentUser(), items);
+  authorize<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<void>;
+  authorize(ability: string, resource?: Resource): Promise<void>;
+  async authorize(first: string | Type<unknown>, ...rest: unknown[]): Promise<void> {
+    return this.authorizeFor(await this.currentUser(), first, rest);
+  }
+
+  /** Check many abilities at once (one user, one permission fetch). A failing item denies. */
+  async allowsMany(items: readonly BatchItem[]): Promise<BatchResult[]> {
+    return this.allowsManyFor(await this.currentUser(), items);
   }
 
   /**
-   * Resolve the QUERY SCOPE constraint for the current (context) user against
-   * `entity` — the `accessibleBy` / Pundit `policy_scope` concept. Returns an
-   * ORM-neutral {@link ScopeConstraint} an adapter (e.g. the TypeORM `applyScope`
-   * helper) turns into a parameterized `WHERE`.
-   *
-   * Consistent with the Gate's single-resource semantics:
-   * - super-admin / before-grant / permission-provider grant → `allow-all`,
-   * - anonymous, or no policy/scope → `deny-all` (default-deny),
-   * - otherwise the policy's `scope` (or `viewAny`-style) constraint.
-   *
-   * `ability` (default `'viewAny'`) names the permission-provider check used for
-   * the allow-all grant and the policy fallback method.
+   * The query scope of `entity` (a resource class linked with `@PolicyFor`, or the
+   * policy class itself) for the current user, from the policy's `scope(user, entity)`
+   * method (else the `ability` method, `viewAny` by default). See {@link ScopeConstraint}.
    */
   async scope(entity: Type<unknown>, ability = 'viewAny'): Promise<ScopeConstraint> {
-    return this.resolveScope(await this.currentUser(), entity, ability);
+    return this.scopeFor(await this.currentUser(), entity, ability);
   }
 
-  // --- coarse role checks (operate on the current/context user) ---
-
-  /** True when the current user holds `role`. */
+  /** True when the current user holds `role` (a fact: `superAdmin` does not apply). */
   async hasRole(role: string): Promise<boolean> {
-    return this.checkRoles(await this.currentUser(), [role]);
+    return this.rbac.hasAnyRole(await this.currentUser(), [role]);
   }
 
-  /** True when the current user holds ANY of `roles`. */
+  /** True when the current user holds any of `roles`. */
   async hasAnyRole(roles: string[]): Promise<boolean> {
-    return this.checkRoles(await this.currentUser(), roles);
+    return this.rbac.hasAnyRole(await this.currentUser(), roles);
   }
 
-  // --- internal: used by BoundGate too ---
+  // --- explicit user (BoundGate) ---
 
   /** @internal */
-  allowsForUser(user: MaybeUser, ability: string, resource?: Resource): Promise<boolean> {
-    return this.check(user, ability, resource, this.resolveRequestCache());
+  async allowsFor(user: User, first: string | Type<unknown>, rest: unknown[]): Promise<boolean> {
+    return (await this.decide(user, first, rest, this.rbac.requestCache(), false)).allowed;
   }
 
-  /** @internal — batch check for an explicit/bound user (see {@link allowsMany}). */
-  allowsManyForUser(user: MaybeUser, items: BatchAbility[]): Promise<BatchResult[]> {
-    return this.checkMany(user, items);
+  /** @internal */
+  async authorizeFor(user: User, first: string | Type<unknown>, rest: unknown[]): Promise<void> {
+    const decision = await this.decide(user, first, rest, this.rbac.requestCache(), true);
+    if (!decision.allowed) {
+      throw new AuthorizationError(
+        user == null ? 'unauthenticated' : 'forbidden',
+        decision.policy,
+        typeof first === 'string' ? first : String(rest[0]),
+      );
+    }
   }
 
-  /**
-   * Run a batch of checks against one already-resolved user, sharing a single
-   * {@link PermissionCache} so the provider's `getPermissions` runs at most once.
-   * Prefers the per-request cache (so the batch also coalesces with other checks in
-   * the same request); falls back to a transient per-batch cache when standalone.
-   */
-  private async checkMany(user: MaybeUser, items: BatchAbility[]): Promise<BatchResult[]> {
-    const cache = this.resolveRequestCache() ?? new PermissionCache();
+  /** @internal */
+  async allowsManyFor(user: User, items: readonly BatchItem[]): Promise<BatchResult[]> {
+    const cache = this.rbac.requestCache() ?? new PermissionCache();
     const prefetched = await this.prefetchDecisions(user, items);
     const out: BatchResult[] = [];
     for (const [index, item] of items.entries()) {
       let allowed: boolean;
       try {
-        allowed = (await this.decide(user, item.ability, item.resource, cache, prefetched?.[index]))
+        const [first, rest] = isPolicyCheck(item)
+          ? [item.policy, [item.ability, ...(item.args ?? [])]]
+          : [item.ability, item.resource === undefined ? [] : [item.resource]];
+        allowed = (await this.decide(user, first, rest, cache, false, prefetched.get(index)))
           .allowed;
       } catch {
-        // Unresolved/ambiguous ability → deny just this item (don't abort the batch).
         allowed = false;
       }
-      out.push(
-        item.resource === undefined
-          ? { ability: item.ability, allowed }
-          : { ability: item.ability, resource: item.resource, allowed },
-      );
+      out.push({ ...item, allowed });
     }
     return out;
   }
 
   /**
-   * One {@link DecisionProvider.decideMany} round-trip for a whole batch, when the provider
-   * supports it. Returns `undefined` (→ per-item `decide`) otherwise. A batch-call failure makes
-   * every item fall back to its own `decide` call rather than failing the batch.
+   * One `decideMany` round-trip to the external decision point for the string abilities
+   * of a batch, when it supports batching. Empty otherwise, and when the batch call fails
+   * (each item then asks `decide` on its own).
    */
   private async prefetchDecisions(
-    maybeUser: MaybeUser,
-    items: BatchAbility[],
-  ): Promise<Array<{ verdict: DecisionVerdict }> | undefined> {
-    const provider = this.resolveDecisionProvider();
-    if (!provider || typeof provider.decideMany !== 'function' || items.length === 0) {
-      return undefined;
-    }
-    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
-    try {
-      const verdicts = await provider.decideMany(
-        user,
-        items.map((i) =>
-          i.resource === undefined
-            ? { ability: i.ability }
-            : { ability: i.ability, resource: i.resource },
-        ),
+    user: User,
+    items: readonly BatchItem[],
+  ): Promise<Map<number, Prefetched>> {
+    const out = new Map<number, Prefetched>();
+    const provider = this.rbac.decisions();
+    if (!provider || typeof provider.decideMany !== 'function') return out;
+    const indexes: number[] = [];
+    const requests: Array<{ ability: string; resource?: Resource }> = [];
+    for (const [index, item] of items.entries()) {
+      if (isPolicyCheck(item)) continue;
+      indexes.push(index);
+      requests.push(
+        item.resource === undefined
+          ? { ability: item.ability }
+          : { ability: item.ability, resource: item.resource },
       );
-      if (!Array.isArray(verdicts) || verdicts.length !== items.length) return undefined;
-      return verdicts.map((verdict) => ({ verdict }));
-    } catch {
-      return undefined;
     }
-  }
-
-  /** @internal — used by {@link BoundGate.authorize} to surface the deny reason/message. */
-  decideForUser(
-    user: MaybeUser,
-    ability: string,
-    resource?: Resource,
-  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
-    return this.decide(user, ability, resource, this.resolveRequestCache());
+    if (requests.length === 0) return out;
+    try {
+      const verdicts = await provider.decideMany(user, requests);
+      if (!Array.isArray(verdicts) || verdicts.length !== requests.length) return out;
+      for (const [i, index] of indexes.entries()) out.set(index, { verdict: verdicts[i] });
+    } catch {
+      out.clear();
+    }
+    return out;
   }
 
   /** @internal */
-  hasAnyRoleForUser(user: MaybeUser, roles: string[]): Promise<boolean> {
-    return this.checkRoles(user, roles);
+  async hasAnyRoleFor(user: User, roles: string[]): Promise<boolean> {
+    return this.rbac.hasAnyRole(user, roles);
   }
 
-  /** @internal — used by {@link BoundGate.scope}. */
-  scopeForUser(
-    user: MaybeUser,
-    entity: Type<unknown>,
-    ability = 'viewAny',
-  ): Promise<ScopeConstraint> {
-    return this.resolveScope(user, entity, ability);
-  }
+  /** @internal */
+  async scopeFor(user: User, entity: Type<unknown>, ability: string): Promise<ScopeConstraint> {
+    if ((await this.superAdmin?.(user, ability, entity)) === true) return scopeAll;
 
-  /**
-   * Resolve a query-scope constraint for `entity`, mirroring {@link resolveBase}'s
-   * grant order so scoping stays consistent with single-resource decisions:
-   *
-   * 1. super-admin hook grants → `allow-all`;
-   *    1b. decision provider `planScope` → its constraint (unless it abstains);
-   * 2. (authenticated) permission-provider grant for `ability` → `allow-all`;
-   * 3. the policy's `scope` (or `viewAny`-style) method → its constraint;
-   * 4. otherwise (anonymous, no policy, no scope method) → `deny-all`.
-   *
-   * The policy `before` hook is also honored as an allow/deny grant before the
-   * scope method runs, so a policy that broadly allows/denies in `before` scopes
-   * the same way it decides.
-   */
-  private async resolveScope(
-    maybeUser: MaybeUser,
-    entity: Type<unknown>,
-    ability: string,
-  ): Promise<ScopeConstraint> {
-    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
-
-    // 1. Global super-admin hook → allow-all (a `false` does not deny here, it
-    //    just falls through, mirroring resolveBase's grant-or-fall-through).
-    const sa = normalizeResult(await this.superAdmin?.(user, ability, entity));
-    if (sa.allowed === true) return scopeAll;
-
-    // 1b. External decision point's query plan (e.g. Cerbos PlanResources) → used as-is;
-    //     `undefined` abstains.
-    const planner = this.resolveDecisionProvider();
+    // The external decision point's query plan (e.g. Cerbos PlanResources), used as-is.
+    const planner = this.rbac.decisions();
     if (planner && typeof planner.planScope === 'function') {
       const planned = await planner.planScope(user, entity, ability);
       if (planned !== undefined) return planned;
     }
 
-    // 2. Permission-provider grant for the scope ability → allow-all.
-    if (
-      maybeUser !== NO_USER &&
-      (await this.permissionProviderGrants(user, ability, undefined, this.resolveRequestCache()))
-    ) {
-      return scopeAll;
+    // The policy has the final word; a persisted permission only scopes an entity
+    // without a policy method to ask.
+    const policy = isOfficialPolicy(entity) ? entity : this.index.policyFor(entity);
+    const instance = policy
+      ? (this.index.instanceOf(policy) as Record<string, unknown>)
+      : undefined;
+    const method = (
+      instance && typeof instance.scope === 'function' ? instance.scope : instance?.[ability]
+    ) as ScopeMethod | undefined;
+    if (!instance || typeof method !== 'function') {
+      return (await this.rbac.grants(user, ability)) ? scopeAll : scopeNone;
     }
 
-    // 3. Policy scope (or viewAny-style fallback) method.
-    const policy = this.policies.forResource(entity);
-    if (policy) {
-      const scopeMethod = this.resolveScopeMethod(policy, ability);
-      if (scopeMethod) {
-        const before = (policy as PolicyInstance).before as PolicyBeforeHook | undefined;
-        if (typeof before === 'function') {
-          const result = normalizeResult(await before.call(policy, user, ability));
-          if (result.allowed === true) return scopeAll;
-          if (result.allowed === false) return scopeNone;
-        }
-        // Anonymous users see no rows (default-deny, like the single-resource path).
-        if (maybeUser === NO_USER) return scopeNone;
-        return normalizeScope(await scopeMethod.call(policy, user, entity));
+    const before = instance.before as ((user: User, ability: string) => unknown) | undefined;
+    if (typeof before === 'function') {
+      const early = await before.call(instance, user ?? null, ability);
+      if (early === true) return scopeAll;
+      if (early === false) return scopeNone;
+    }
+    if (user == null) return scopeNone;
+    return normalizeScope(await method.call(instance, user, entity));
+  }
+
+  // --- resolution ---
+
+  /** Decide, publish the decision, and (in `authorize` mode) let the official service emit its denial. */
+  private async decide(
+    user: User,
+    first: string | Type<unknown>,
+    rest: unknown[],
+    cache: PermissionCache | undefined,
+    authorizing: boolean,
+    prefetched?: Prefetched,
+  ): Promise<Decision> {
+    const ability = typeof first === 'string' ? first : String(rest[0]);
+    const resource =
+      typeof first === 'string'
+        ? (rest[0] as Resource | undefined)
+        : (rest[1] as Resource | undefined);
+    const decision =
+      typeof first === 'string'
+        ? await this.decideString(user, first, resource, cache, authorizing, prefetched)
+        : await this.decidePolicy(user, first, ability, rest.slice(1), authorizing);
+    publishAuthzDecision(ability, decision.allowed, decision.reason, user, resource, {
+      policy: decision.policy,
+    });
+    return decision;
+  }
+
+  private async decidePolicy(
+    user: User,
+    policy: Type<unknown>,
+    ability: string,
+    args: unknown[],
+    authorizing: boolean,
+  ): Promise<Decision> {
+    const service = this.authz as unknown as {
+      can(p: Type<unknown>, a: string, u: User, ...args: unknown[]): Promise<boolean>;
+      authorize(p: Type<unknown>, a: string, u: User, ...args: unknown[]): Promise<void>;
+    };
+    let allowed: boolean;
+    if (authorizing) {
+      try {
+        await service.authorize(policy, ability, user, ...args);
+        allowed = true;
+      } catch (error) {
+        if (!(error instanceof AuthorizationError)) throw error;
+        allowed = false;
       }
+    } else {
+      allowed = await service.can(policy, ability, user, ...args);
     }
-
-    // 4. No way to scope → deny-all.
-    return scopeNone;
+    return { allowed, reason: 'policy', policy: policy.name };
   }
 
-  /**
-   * Pick the policy's scope method: the conventional `scope`, else the `ability`
-   * method (e.g. `viewAny`) when it is scope-shaped. Returns `undefined` when the
-   * policy declares neither.
-   */
-  private resolveScopeMethod(policy: PolicyInstance, ability: string): ScopeMethod | undefined {
-    const scope = (policy as Record<string, unknown>).scope;
-    if (typeof scope === 'function') return scope as ScopeMethod;
-    const fallback = (policy as Record<string, unknown>)[ability];
-    if (typeof fallback === 'function') return fallback as ScopeMethod;
-    return undefined;
-  }
-
-  /**
-   * Whether the registered {@link PermissionProvider} grants `ability` for an authenticated `user` —
-   * the RBAC "before" grant shared by the single-resource ({@link resolveBase}) and scope
-   * ({@link resolveScope}) paths, single-sourced here so the grant order can't drift between them.
-   *
-   * Grant-only: a `false`/nullish result is "no grant", never a deny. When the provider lists the
-   * user's granted permissions, segment-based wildcard matching runs in the core (a granted
-   * `posts.*` satisfies `posts.update`, `*` satisfies anything) regardless of adapter; a nullish
-   * list defers to the exact-match `hasPermission`. A set the provider marks
-   * {@link PermissionProvider.exhaustivePermissions} answers the check on its own; otherwise an
-   * unsatisfied set still defers to `hasPermission`. The granted set is fetched through `cache`
-   * when one is supplied, else via a direct fetch.
-   */
-  private async permissionProviderGrants(
+  private async decideString(
     user: User,
     ability: string,
     resource: Resource | undefined,
     cache: PermissionCache | undefined,
-  ): Promise<boolean> {
-    const provider = this.resolvePermissionProvider();
-    if (!provider) return false;
-    if (typeof provider.getPermissions === 'function') {
-      const satisfied = cache
-        ? await cache.satisfies(provider, user, ability)
-        : await (async () => {
-            const granted = await provider.getPermissions?.(user);
-            return granted == null ? undefined : permissionSatisfied(granted, ability);
-          })();
-      if (satisfied === true) return true;
-      if (satisfied === false && provider.exhaustivePermissions === true) return false;
+    authorizing: boolean,
+    prefetched: Prefetched | undefined,
+  ): Promise<Decision> {
+    if ((await this.superAdmin?.(user, ability, resource)) === true) {
+      return { allowed: true, reason: 'super-admin', policy: null };
     }
-    return (await provider.hasPermission(user, ability, resource)) === true;
-  }
 
-  /**
-   * Resolve the user's effective roles and test membership against `roles`. Returns
-   * `false` for an anonymous (NO_USER) caller and whenever no source yields a role
-   * (deny-by-default). Roles come from the UNION of the default/overridden
-   * {@link RoleResolver} (reads the user object) and the optional {@link RoleProvider}
-   * seam (a persisted store) — so an app needs neither to opt in.
-   */
-  private async checkRoles(maybeUser: MaybeUser, roles: string[]): Promise<boolean> {
-    if (maybeUser === NO_USER || roles.length === 0) return false;
-    const userRoles = await this.rolesOf(maybeUser, this.resolveRequestCache());
-    if (userRoles.size === 0) return false;
-    return roles.some((r) => userRoles.has(r));
-  }
-
-  /**
-   * The current user's effective role names (resolver ∪ provider). The provider's
-   * roles are fetched through `cache` when one is supplied.
-   */
-  private async rolesOf(user: User, cache: PermissionCache | undefined): Promise<Set<string>> {
-    const out = new Set<string>();
-    const fromResolver = await this.roleResolver(user);
-    if (Array.isArray(fromResolver)) {
-      for (const r of fromResolver) if (typeof r === 'string') out.add(r);
-    }
-    const provider = this.resolveRoleProvider();
+    // External decision point (Cerbos/OPA/...): its allow or deny is final; `undefined` abstains.
+    const provider = this.rbac.decisions();
     if (provider) {
-      const fromProvider = await (cache ? cache.getRoles(provider, user) : provider.getRoles(user));
-      if (Array.isArray(fromProvider)) {
-        for (const r of fromProvider) if (typeof r === 'string') out.add(r);
-      }
-    }
-    return out;
-  }
-
-  private async check(
-    maybeUser: MaybeUser,
-    ability: string,
-    resource?: Resource,
-    cache?: PermissionCache,
-  ): Promise<boolean> {
-    return (await this.decide(maybeUser, ability, resource, cache)).allowed;
-  }
-
-  /**
-   * Resolve a decision AND publish it for observers. Returns the full decision
-   * (verdict + reason + optional deny message) so {@link authorize} can surface the
-   * `reason`/`message` on the thrown `ForbiddenException`. {@link check} discards
-   * everything but the verdict.
-   */
-  private async decide(
-    maybeUser: MaybeUser,
-    ability: string,
-    resource?: Resource,
-    cache?: PermissionCache,
-    prefetched?: { verdict: DecisionVerdict },
-  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
-    const decision = await this.resolve(maybeUser, ability, resource, cache, prefetched);
-    // Emit the decision for observers (e.g. the generic @dudousxd/nestjs-diagnostics-telescope watcher).
-    // Loosely coupled via a diagnostics channel — zero-overhead when no subscriber,
-    // and a publish failure can never affect the verdict. Only reached decisions are
-    // emitted; an unresolved/ambiguous ability throws above and is intentionally silent.
-    publishAuthzDecision(
-      ability,
-      decision.allowed,
-      decision.reason,
-      maybeUser === NO_USER ? undefined : maybeUser,
-      resource,
-    );
-    return decision;
-  }
-
-  /**
-   * Resolve an ability to a final verdict, the path that decided it, and an optional
-   * deny message. Runs the global `after` hook over the base decision (see
-   * {@link AfterHook} for override semantics). Throws
-   * {@link AbilityNotResolvedException}/{@link AmbiguousAbilityException} when no
-   * decision can be reached (those paths emit no decision and skip `after`).
-   */
-  private async resolve(
-    maybeUser: MaybeUser,
-    ability: string,
-    resource?: Resource,
-    cache?: PermissionCache,
-    prefetched?: { verdict: DecisionVerdict },
-  ): Promise<{ allowed: boolean; reason: AuthzDecisionReason; message?: string }> {
-    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
-    const base = await this.resolveBase(maybeUser, ability, resource, cache, prefetched);
-
-    // Global `after` hook (Laravel `Gate::after`). It may OVERRIDE only when the
-    // base path produced no explicit verdict (`base.allowed === undefined`);
-    // otherwise it is observe-only. A nullish/void return never changes anything.
-    if (this.after) {
-      const observed = base.allowed; // undefined ⇒ policy/gate had no opinion
-      const after = normalizeResult(await this.after(user, ability, observed, resource));
-      if (observed === undefined && after.allowed !== undefined) {
-        return withMessage({ allowed: after.allowed, reason: 'after' }, after.message);
-      }
-    }
-
-    // Finalize: a base with "no opinion" (undefined) denies by default.
-    return withMessage({ allowed: base.allowed === true, reason: base.reason }, base.message);
-  }
-
-  /**
-   * The pre-`after` resolution. `allowed` is `undefined` when the deciding path
-   * (policy method / ad-hoc gate) returned a nullish value — "no opinion" — which
-   * lets the {@link AfterHook} supply a verdict before the default-deny finalize.
-   */
-  private async resolveBase(
-    maybeUser: MaybeUser,
-    ability: string,
-    resource?: Resource,
-    cache?: PermissionCache,
-    prefetched?: { verdict: DecisionVerdict },
-  ): Promise<{ allowed: boolean | undefined; reason: AuthzDecisionReason; message?: string }> {
-    const user: User = maybeUser === NO_USER ? undefined : maybeUser;
-
-    // Global super-admin hook first (with the resource, so it can scope the bypass).
-    const sa = normalizeResult(await this.superAdmin?.(user, ability, resource));
-    if (sa.allowed === true)
-      return withMessage({ allowed: true, reason: 'super-admin' }, sa.message);
-    if (sa.allowed === false)
-      return withMessage({ allowed: false, reason: 'super-admin' }, sa.message);
-
-    // External decision point (Cerbos/OPA/...): authoritative allow OR deny; `undefined` abstains.
-    const decisionProvider = this.resolveDecisionProvider();
-    if (decisionProvider) {
-      const verdict = normalizeResult(
-        prefetched ? prefetched.verdict : await decisionProvider.decide(user, ability, resource),
+      const verdict = normalizeVerdict(
+        prefetched ? prefetched.verdict : await provider.decide(user, ability, resource),
       );
       if (verdict.allowed !== undefined) {
-        return withMessage(
-          { allowed: verdict.allowed, reason: 'decision-provider' },
-          verdict.message,
-        );
+        return { allowed: verdict.allowed, reason: 'decision-provider', policy: null };
       }
     }
 
-    // RBAC seam (Laravel/spatie `Gate::before` grant): if a PermissionProvider is
-    // registered and the (authenticated) user holds the named permission, grant it.
-    // Grant-only — a `false`/`undefined` result falls through to normal resolution,
-    // so this never *denies* an ability a policy/gate would otherwise allow.
-    if (
-      maybeUser !== NO_USER &&
-      (await this.permissionProviderGrants(user, ability, resource, cache))
-    ) {
-      return { allowed: true, reason: 'permission-provider' };
-    }
-
-    const policy = this.resolvePolicy(ability, resource);
+    // A policy that defines the ability has the final word: a persisted permission
+    // named like the ability does not bypass it.
+    const policy = this.policyFor(ability, resource);
     if (policy) {
-      const method = (policy as Record<string, unknown>)[ability];
-      // The `before` hook may only answer abilities the policy actually defines.
-      // Gate it on method existence FIRST so a policy with a `before` but no
-      // matching method falls through to AbilityNotResolved instead of letting
-      // `before` grant/deny an ability the policy never declared.
-      if (typeof method === 'function') {
-        const before = (policy as PolicyInstance).before as PolicyBeforeHook | undefined;
-        if (typeof before === 'function') {
-          const result = normalizeResult(await before.call(policy, user, ability));
-          if (result.allowed === true)
-            return withMessage({ allowed: true, reason: 'policy-before' }, result.message);
-          if (result.allowed === false)
-            return withMessage({ allowed: false, reason: 'policy-before' }, result.message);
-        }
-        // Anonymous users are denied unless a hook granted access above.
-        if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
-        const result = normalizeResult(
-          (await (method as (...a: unknown[]) => unknown).call(
-            policy,
-            user,
-            resource,
-          )) as PolicyResult,
-        );
-        // A nullish policy return is "no opinion" → leave `allowed` undefined so
-        // an `after` hook may decide; otherwise it default-denies in `resolve`.
-        return withMessage({ allowed: result.allowed, reason: 'policy' }, result.message);
-      }
+      const args = resource !== undefined && typeof resource !== 'function' ? [resource] : [];
+      return this.decidePolicy(user, policy, ability, args, authorizing);
     }
 
-    // Fall back to an ad-hoc gate.
+    if (await this.rbac.grants(user, ability, resource, cache)) {
+      return { allowed: true, reason: 'permission-provider', policy: null };
+    }
+
     const gate = this.gates.get(ability);
     if (gate) {
-      if (maybeUser === NO_USER) return { allowed: false, reason: 'anonymous' };
-      const result = normalizeResult((await gate(user, resource)) as PolicyResult);
-      return withMessage({ allowed: result.allowed, reason: 'gate' }, result.message);
+      if (user == null) return { allowed: false, reason: 'anonymous', policy: null };
+      return { allowed: (await gate(user, resource)) === true, reason: 'gate', policy: null };
     }
 
     throw new AbilityNotResolvedException(ability);
   }
 
-  private resolvePolicy(ability: string, resource?: Resource): PolicyInstance | undefined {
+  /** The linked policy defining `ability` for `resource` (or for no resource, unambiguously). */
+  private policyFor(ability: string, resource: Resource | undefined): Type<unknown> | undefined {
     if (resource === undefined) {
-      // Class-level ability with no resource: scan registered policies for the
-      // method. If MORE THAN ONE policy defines it, picking by Map-insertion
-      // order would be a silent, arbitrary (and likely wrong) choice — throw so
-      // the caller disambiguates by passing the resource class explicitly.
-      const matches = this.policies
-        .all()
-        .filter((policy) => typeof (policy as Record<string, unknown>)[ability] === 'function');
-      if (matches.length === 0) return undefined;
+      const matches = this.index.linkedPoliciesWith(ability);
       if (matches.length > 1) {
         throw new AmbiguousAbilityException(
           ability,
-          matches.map((p) => (p as PolicyInstance).constructor?.name ?? 'Policy'),
+          matches.map((p) => p.name),
         );
       }
       return matches[0];
     }
-    // Resource may be an instance or a class (for class-level abilities passed as Type).
-    if (typeof resource === 'function') {
-      return this.policies.forResource(resource as Type<unknown>);
-    }
-    return this.policies.forInstance(resource);
+    const policy = this.index.policyOf(resource);
+    if (!policy) return undefined;
+    return typeof (policy.prototype as Record<string, unknown>)[ability] === 'function'
+      ? policy
+      : undefined;
   }
 }
 
-/**
- * A {@link Gate} bound to an explicit user. Returned by {@link Gate.forUser}.
- */
+/** A {@link Gate} bound to an explicit user. Returned by {@link Gate.forUser}. */
 export class BoundGate {
   constructor(
     private readonly gate: Gate,
-    private readonly user: MaybeUser,
+    private readonly user: User,
   ) {}
 
-  allows(ability: string, resource?: Resource): Promise<boolean> {
-    return this.gate.allowsForUser(this.user, ability, resource);
+  allows<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<boolean>;
+  allows(ability: string, resource?: Resource): Promise<boolean>;
+  allows(first: string | Type<unknown>, ...rest: unknown[]): Promise<boolean> {
+    return this.gate.allowsFor(this.user, first, rest);
   }
 
-  async denies(ability: string, resource?: Resource): Promise<boolean> {
-    return !(await this.allows(ability, resource));
+  denies<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<boolean>;
+  denies(ability: string, resource?: Resource): Promise<boolean>;
+  async denies(first: string | Type<unknown>, ...rest: unknown[]): Promise<boolean> {
+    return !(await this.gate.allowsFor(this.user, first, rest));
   }
 
-  /** Batch-authorize many abilities for the bound user in one pass (see {@link Gate.allowsMany}). */
-  allowsMany(items: BatchAbility[]): Promise<BatchResult[]> {
-    return this.gate.allowsManyForUser(this.user, items);
+  authorize<P, const A extends Ability<P>>(
+    policy: Type<P>,
+    ability: A,
+    ...args: AbilityArgsOf<P, A>
+  ): Promise<void>;
+  authorize(ability: string, resource?: Resource): Promise<void>;
+  authorize(first: string | Type<unknown>, ...rest: unknown[]): Promise<void> {
+    return this.gate.authorizeFor(this.user, first, rest);
   }
 
-  /** Resolve the query-scope constraint for the bound user (see {@link Gate.scope}). */
+  /** Batch-check for the bound user (see {@link Gate.allowsMany}). */
+  allowsMany(items: readonly BatchItem[]): Promise<BatchResult[]> {
+    return this.gate.allowsManyFor(this.user, items);
+  }
+
+  /** The query scope for the bound user (see {@link Gate.scope}). */
   scope(entity: Type<unknown>, ability = 'viewAny'): Promise<ScopeConstraint> {
-    return this.gate.scopeForUser(this.user, entity, ability);
+    return this.gate.scopeFor(this.user, entity, ability);
   }
 
-  async authorize(ability: string, resource?: Resource): Promise<void> {
-    const decision = await this.gate.decideForUser(this.user, ability, resource);
-    if (!decision.allowed) throw forbidden(ability, decision);
-  }
-
-  /** True when the bound user holds `role`. */
   hasRole(role: string): Promise<boolean> {
-    return this.gate.hasAnyRoleForUser(this.user, [role]);
+    return this.gate.hasAnyRoleFor(this.user, [role]);
   }
 
-  /** True when the bound user holds ANY of `roles`. */
   hasAnyRole(roles: string[]): Promise<boolean> {
-    return this.gate.hasAnyRoleForUser(this.user, roles);
+    return this.gate.hasAnyRoleFor(this.user, roles);
   }
 }

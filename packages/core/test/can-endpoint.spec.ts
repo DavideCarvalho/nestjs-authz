@@ -1,11 +1,11 @@
 import 'reflect-metadata';
+import { AuthorizationModule } from '@nestjs/authorization';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Policy } from '../src/decorator/policy.decorator.js';
+import { PolicyFor } from '../src/links.js';
 import { AuthzModule } from '../src/module.js';
-import { CONTEXT_ACCESSOR } from '../src/tokens.js';
 import type { AuthzModuleOptions, ResourceLoaderMap } from '../src/types.js';
 
 class Post {
@@ -15,28 +15,28 @@ class Post {
   ) {}
 }
 
-@Policy(Post)
+@PolicyFor(Post)
 class PostPolicy {
   // class-level abilities (no resource): user #1 may create, may not publish.
-  create(user: { id: number } | undefined) {
+  create(user: { id: number } | null) {
     return user?.id === 1;
   }
   publish() {
     return false;
   }
   // instance ability: only the owner may update.
-  update(user: { id: number } | undefined, post: Post) {
+  update(user: { id: number } | null, post: Post) {
     return user?.id === post.ownerId;
   }
 }
 
-// Always "user #1".
-const stubContext = { userRef: () => ({ type: 'User', id: 1 }) };
+// The official guard's user: always "user #1".
+const official = AuthorizationModule.forRoot({ getUser: () => ({ id: 1 }) });
 
 async function bootstrap(canEndpoint: boolean | string | undefined): Promise<INestApplication> {
   const mod = await Test.createTestingModule({
-    imports: [AuthzModule.forRoot({ policies: [PostPolicy], canEndpoint })],
-    providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+    imports: [official, AuthzModule.forRoot(canEndpoint === undefined ? {} : { canEndpoint })],
+    providers: [PostPolicy],
   }).compile();
   const app = mod.createNestApplication();
   await app.init();
@@ -102,10 +102,8 @@ describe('POST /authz/can resource rehydration (resourceLoaders)', () => {
     resourceLoaders: ResourceLoaderMap,
   ): Promise<INestApplication> {
     const mod = await Test.createTestingModule({
-      imports: [
-        AuthzModule.forRoot({ policies: [PostPolicy], canEndpoint: true, resourceLoaders }),
-      ],
-      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+      imports: [official, AuthzModule.forRoot({ canEndpoint: true, resourceLoaders })],
+      providers: [PostPolicy],
     }).compile();
     const a = mod.createNestApplication();
     await a.init();
@@ -156,17 +154,17 @@ describe('POST /authz/can resource rehydration (resourceLoaders)', () => {
   it('wires resourceLoaders through forRootAsync too', async () => {
     const mod = await Test.createTestingModule({
       imports: [
+        official,
         AuthzModule.forRootAsync({
           // canEndpoint is declared statically (controllers register before the
           // factory resolves); resourceLoaders are read from the resolved options.
           canEndpoint: true,
           useFactory: (): AuthzModuleOptions => ({
-            policies: [PostPolicy],
             resourceLoaders: { Post: (id) => new Post(Number(id), 1) },
           }),
         }),
       ],
-      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+      providers: [PostPolicy],
     }).compile();
     app = mod.createNestApplication();
     await app.init();
@@ -201,13 +199,13 @@ describe('POST /authz/can — batch (array body)', () => {
   it('echoes the resource shim and rehydrates per-item via resourceLoaders', async () => {
     const mod = await Test.createTestingModule({
       imports: [
+        official,
         AuthzModule.forRoot({
-          policies: [PostPolicy],
           canEndpoint: true,
           resourceLoaders: { Post: (id) => new Post(Number(id), Number(id) === 1 ? 1 : 2) },
         }),
       ],
-      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+      providers: [PostPolicy],
     }).compile();
     app = mod.createNestApplication();
     await app.init();

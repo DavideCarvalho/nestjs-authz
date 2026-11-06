@@ -4,13 +4,13 @@ import type {
   ExtensionContext,
   LeafModel,
 } from '@dudousxd/nestjs-codegen/extension';
-import { type ClassDeclaration, Node, type Project, type SourceFile } from 'ts-morph';
+import { type ClassDeclaration, Node, type Project, type SourceFile, SyntaxKind } from 'ts-morph';
 
 /**
- * The `@Can(ability, Resource?)` descriptor discovered on a controller route, plus the optional
- * class-level abilities discovered on `@Policy(Resource)` classes. Mirrors the shapes stored by
- * `@dudousxd/nestjs-authz`'s `CAN_METADATA` / `POLICY_RESOURCE_METADATA` — read statically from
- * the AST rather than from reflect-metadata (which isn't available at codegen time).
+ * A client ability discovered on a controller route (the official `@Can(Policy, 'ability', ...)`,
+ * `@Permission`, or the deprecated string `@Can`), or on a policy class (`@Policy()`,
+ * `@PolicyFor(Resource)`). Read statically from the AST: reflect-metadata is not available at
+ * codegen time.
  */
 export interface AuthzAbilityInfo {
   /** The ability string, e.g. `'update'` or `'access-admin'`. */
@@ -44,27 +44,95 @@ export interface AuthzCodegenOptions {
 
 const DEFAULT_ENDPOINT = '/authz/can';
 
-/** Read the ability + resource from a single `@Can(...)` decorator's arguments. */
-function readCanDecorator(args: Node[]): AuthzAbilityInfo | null {
-  const abilityArg = args[0];
-  if (!abilityArg || !Node.isStringLiteral(abilityArg)) return null;
-  const info: AuthzAbilityInfo = { ability: abilityArg.getLiteralValue() };
-  const resourceArg = args[1];
-  // `@Can('update', Post)` — second arg is the resource class identifier.
-  if (resourceArg && Node.isIdentifier(resourceArg)) {
-    info.resource = resourceArg.getText();
-  }
-  return info;
+/** Built-in policies whose abilities are not client abilities themselves. */
+const ROLE_POLICY = 'RolePolicy';
+const PERMISSION_POLICY = 'PermissionPolicy';
+const GATE_POLICY = 'GatePolicy';
+
+/** The string literals among `args`, e.g. `permission('a', 'b')` → `['a', 'b']`. */
+function stringArgs(args: Node[]): string[] {
+  return args.flatMap((a) => (Node.isStringLiteral(a) ? [a.getLiteralValue()] : []));
+}
+
+/** `byId(Post)` / `staticCanArgs('x')` → its callee name and arguments. */
+function callOf(node: Node | undefined): { name: string; args: Node[] } | undefined {
+  if (!node || !Node.isCallExpression(node)) return undefined;
+  return { name: node.getExpression().getText(), args: node.getArguments() };
 }
 
 /**
- * Discover the `@Can(...)` ability on the controller method backing a route. Opens the route's
- * controller source via the shared ts-morph project, finds the method, and reads its (or its
- * class's) `@Can` decorator. Class-level `@Can` applies when the method has none.
+ * The resource a policy class is linked to: `@PolicyFor(Post)` (or the deprecated
+ * `@Policy(Post)`), else the class name without `Policy` (`PostPolicy` → `Post`).
  */
-function discoverRouteAbility(route: RouteDescriptor, project: Project): AuthzAbilityInfo | null {
+function resourceOfPolicy(policyName: string, project: Project): string | undefined {
+  for (const sourceFile of project.getSourceFiles()) {
+    const classDecl = sourceFile.getClass(policyName);
+    if (!classDecl) continue;
+    const linked = resourceNameFromPolicy(classDecl);
+    if (linked) return linked;
+  }
+  return policyName.endsWith('Policy')
+    ? policyName.slice(0, -'Policy'.length) || undefined
+    : undefined;
+}
+
+/**
+ * Read the client abilities one `@Can(...)` (or sugar) decorator declares:
+ *
+ * - official `@Can(PostPolicy, 'update', byId(Post))` → `update` on `Post` (from `byId`, else
+ *   the policy's `@PolicyFor` link, else its name)
+ * - `@Can(PermissionPolicy, 'has', permission('posts.publish'))` / `@Permission('posts.publish')`
+ *   → the named permissions, model-less
+ * - `@Can(GatePolicy, 'allows', ability('access-admin'))` → `access-admin`
+ * - deprecated `@Can('update', Post)` → `update` on `Post`
+ *
+ * Roles (`@Roles`, `RolePolicy`) are not client abilities.
+ */
+function readCanDecorator(name: string, args: Node[], project: Project): AuthzAbilityInfo[] {
+  if (name === 'Permission') return stringArgs(args).map((ability) => ({ ability }));
+  if (name !== 'Can') return [];
+  const [first, second, third] = args;
+  if (!first) return [];
+  if (Node.isStringLiteral(first)) {
+    const info: AuthzAbilityInfo = { ability: first.getLiteralValue() };
+    if (second && Node.isIdentifier(second)) info.resource = second.getText();
+    return [info];
+  }
+  if (!Node.isIdentifier(first) || !second || !Node.isStringLiteral(second)) return [];
+  const policy = first.getText();
+  const ability = second.getLiteralValue();
+  const resolver = callOf(third);
+  if (policy === ROLE_POLICY) return [];
+  if (policy === PERMISSION_POLICY || policy === GATE_POLICY) {
+    return resolver ? stringArgs(resolver.args).map((a) => ({ ability: a })) : [];
+  }
+  const info: AuthzAbilityInfo = { ability };
+  const fromById = resolver?.name === 'byId' ? resolver.args[0] : undefined;
+  const resource =
+    fromById && Node.isIdentifier(fromById)
+      ? fromById.getText()
+      : resourceOfPolicy(policy, project);
+  if (resource) info.resource = resource;
+  return [info];
+}
+
+/** Every client ability declared on a method or class, top-down. */
+function abilitiesOn(
+  decorated: { getDecorators(): Array<{ getName(): string; getArguments(): Node[] }> },
+  project: Project,
+): AuthzAbilityInfo[] {
+  return decorated
+    .getDecorators()
+    .flatMap((d) => readCanDecorator(d.getName(), d.getArguments(), project));
+}
+
+/**
+ * Discover the abilities on the controller method backing a route, then on its class
+ * (the official guard applies both). The first one is the route's own ability.
+ */
+function discoverRouteAbilities(route: RouteDescriptor, project: Project): AuthzAbilityInfo[] {
   const ref = route.controllerRef;
-  if (!ref) return null;
+  if (!ref) return [];
   let sourceFile: SourceFile | undefined;
   try {
     sourceFile = project.addSourceFileAtPathIfExists(ref.filePath) ?? undefined;
@@ -72,44 +140,35 @@ function discoverRouteAbility(route: RouteDescriptor, project: Project): AuthzAb
     sourceFile = undefined;
   }
   if (!sourceFile) sourceFile = project.getSourceFile(ref.filePath);
-  if (!sourceFile) return null;
+  if (!sourceFile) return [];
 
   const classDecl = sourceFile.getClass(ref.className);
-  if (!classDecl) return null;
-
+  if (!classDecl) return [];
   const method = classDecl.getMethod(ref.methodName);
-  if (method) {
-    const dec = method.getDecorators().find((d) => d.getName() === 'Can');
-    if (dec) {
-      const info = readCanDecorator(dec.getArguments());
-      if (info) return info;
-    }
-  }
-
-  // Fall back to a class-level `@Can(...)` guarding the whole controller.
-  const classDec = classDecl.getDecorators().find((d) => d.getName() === 'Can');
-  if (classDec) return readCanDecorator(classDec.getArguments());
-
-  return null;
+  return [...(method ? abilitiesOn(method, project) : []), ...abilitiesOn(classDecl, project)];
 }
 
+/** Names that make a class a policy: the official `@Policy()`, `@PolicyFor(X)`, the deprecated `@Policy(X)`. */
+const POLICY_DECORATORS = new Set(['Policy', 'PolicyFor']);
+
+/** Members of a policy that are not abilities. */
+const NOT_ABILITIES = new Set(['before', 'scope', 'constructor']);
+
 /**
- * Discover class-level abilities from `@Policy(Resource)` classes: each public, non-lifecycle
- * method name is an ability keyed to that resource. Mirrors how the authz `PolicyRegistry`
- * dispatches `PostPolicy.update(user, post)` for `@Can('update', Post)`.
+ * Discover the abilities of every policy class (`@Policy()`, `@PolicyFor(X)`): each public
+ * instance method but `before` and `scope`, keyed to the policy's resource.
  */
 function discoverPolicyAbilities(project: Project): AuthzAbilityInfo[] {
   const found: AuthzAbilityInfo[] = [];
   for (const sourceFile of project.getSourceFiles()) {
     for (const classDecl of sourceFile.getClasses()) {
-      const policyDec = classDecl.getDecorators().find((d) => d.getName() === 'Policy');
-      if (!policyDec) continue;
-      const resource = resourceNameFromPolicy(policyDec.getArguments(), classDecl);
+      if (!classDecl.getDecorators().some((d) => POLICY_DECORATORS.has(d.getName()))) continue;
+      const resource =
+        resourceNameFromPolicy(classDecl) ?? resourceOfPolicy(classDecl.getName() ?? '', project);
       for (const method of classDecl.getMethods()) {
-        if (method.isStatic()) continue;
+        if (method.isStatic() || method.hasModifier(SyntaxKind.PrivateKeyword)) continue;
         const name = method.getName();
-        // Skip the optional `before(user, ability)` hook — it isn't an ability itself.
-        if (name === 'before') continue;
+        if (NOT_ABILITIES.has(name)) continue;
         const ability: AuthzAbilityInfo = { ability: name };
         if (resource) ability.resource = resource;
         found.push(ability);
@@ -119,12 +178,13 @@ function discoverPolicyAbilities(project: Project): AuthzAbilityInfo[] {
   return found;
 }
 
-/** `@Policy(Post)` → `'Post'`; derive from the class name (`PostPolicy` → `Post`) as a fallback. */
-function resourceNameFromPolicy(args: Node[], classDecl: ClassDeclaration): string | undefined {
-  const arg = args[0];
-  if (arg && Node.isIdentifier(arg)) return arg.getText();
-  const className = classDecl.getName();
-  if (className?.endsWith('Policy')) return className.slice(0, -'Policy'.length);
+/** `@PolicyFor(Post)` / deprecated `@Policy(Post)` → `'Post'`; `undefined` for the official `@Policy()`. */
+function resourceNameFromPolicy(classDecl: ClassDeclaration): string | undefined {
+  for (const decorator of classDecl.getDecorators()) {
+    if (!POLICY_DECORATORS.has(decorator.getName())) continue;
+    const arg = decorator.getArguments()[0];
+    if (arg && Node.isIdentifier(arg)) return arg.getText();
+  }
   return undefined;
 }
 
@@ -272,9 +332,10 @@ export function nestjsAuthzCodegen(options: AuthzCodegenOptions = {}): CodegenEx
     transformRoutes(routes, ctx) {
       const project = ctx.project();
       const out = routes.map((route) => {
-        const info = discoverRouteAbility(route, project);
+        const found = discoverRouteAbilities(route, project);
+        for (const each of found) record(each);
+        const info = found[0];
         if (!info) return route;
-        record(info);
         const marker: AuthzRouteMarker = { ability: info.ability };
         if (info.resource) marker.resource = info.resource;
         // Attach the marker to the route's contract so apiMembers can read it later.

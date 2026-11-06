@@ -179,4 +179,55 @@ describe('nestjsAuthzCodegen', () => {
       'export const authzAbilities = { "Post": ["update", "publish"] } as const;',
     );
   });
+
+  it('reads the official @Can(Policy, ability, resolver) form and the sugar', () => {
+    const source = `
+import { Controller, Get } from '@nestjs/common';
+import { Can, Policy } from '@nestjs/authorization';
+import { GatePolicy, PermissionPolicy, PolicyFor, Roles, Permission, ability, byId, permission } from '@dudousxd/nestjs-authz';
+class Post {}
+class Comment {}
+
+@PolicyFor(Comment)
+export class CommentPolicy {
+  before() { return undefined; }
+  edit(user, comment) { return true; }
+  scope(user) { return true; }
+}
+
+@Policy()
+export class ReportPolicy {
+  export(user) { return true; }
+}
+
+@Controller('posts')
+export class PostsController {
+  @Get(':id') @Can(PostPolicy, 'update', byId(Post)) update() {}
+  @Get('c/:id') @Can(CommentPolicy, 'edit', (ctx) => [ctx]) edit() {}
+  @Get('r') @Can(ReportPolicy, 'export') report() {}
+  @Get('p') @Can(PermissionPolicy, 'has', permission('posts.publish', 'posts.delete')) publish() {}
+  @Get('q') @Permission('posts.archive') archive() {}
+  @Get('g') @Can(GatePolicy, 'allows', ability('access-admin')) admin() {}
+  @Get('roles') @Roles('admin') roles() {}
+}
+`;
+    const ext = nestjsAuthzCodegen();
+    const project = projectWith(source);
+    const ctx = ctxWith(project);
+    const methods = ['update', 'edit', 'report', 'publish', 'archive', 'admin', 'roles'];
+    const routes = ext.transformRoutes?.(
+      methods.map((m) => route('PostsController', m)),
+      ctx,
+    ) as Array<{ contract?: { contractSource?: { authz?: unknown } } }>;
+    const out = ext.apiHeader?.(ctx)?.statements?.join('\n') ?? '';
+    expect(out).toContain(
+      'export type AuthzAbility = "update" | "edit" | "export" | "posts.publish" | "posts.delete" | "posts.archive" | "access-admin";',
+    );
+    expect(out).toContain('"Post": ["update"]');
+    expect(out).toContain('"Comment": ["edit"]');
+    expect(out).toContain('"Report": ["export"]');
+    expect(out).not.toContain('"before"');
+    expect(out).not.toContain('"scope"');
+    expect(routes[6]?.contract?.contractSource?.authz).toBeUndefined();
+  });
 });

@@ -1,4 +1,4 @@
-import type { Gate, Resource } from '@dudousxd/nestjs-authz';
+import type { BoundGate, Gate, Resource } from '@dudousxd/nestjs-authz';
 import type { CanMap } from './resolve-abilities.js';
 
 /**
@@ -20,7 +20,7 @@ import type { CanMap } from './resolve-abilities.js';
  * @returns e.g. `{ update: true, delete: false }`
  */
 export async function authorizeResource(
-  gate: Gate,
+  gate: Gate | BoundGate,
   resource: Resource,
   abilities: string[],
 ): Promise<CanMap> {

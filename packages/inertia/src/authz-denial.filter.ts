@@ -4,8 +4,10 @@ import {
   Catch,
   type ExceptionFilter,
   ForbiddenException,
+  HttpException,
   Inject,
   Optional,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AUTHZ_INERTIA_OPTIONS } from './tokens.js';
 import type { AuthzDenialOptions, AuthzInertiaOptions } from './types.js';
@@ -39,7 +41,7 @@ export const DEFAULT_FORBIDDEN_URL = '/403';
  * `forRoot({ denial: { enabled: false } })`. A `handler(exception, host)`
  * escape hatch fully overrides the behavior on Inertia requests.
  */
-@Catch(ForbiddenException)
+@Catch(ForbiddenException, UnauthorizedException)
 export class AuthzDenialFilter implements ExceptionFilter {
   constructor(
     @Optional()
@@ -50,7 +52,7 @@ export class AuthzDenialFilter implements ExceptionFilter {
     private readonly context?: ContextAccessor,
   ) {}
 
-  catch(exception: ForbiddenException, host: ArgumentsHost): void {
+  catch(exception: ForbiddenException | UnauthorizedException, host: ArgumentsHost): void {
     const denial: AuthzDenialOptions = this.options.denial ?? {};
 
     // Disabled, or non-HTTP context: rethrow so normal Nest handling applies.
@@ -73,7 +75,7 @@ export class AuthzDenialFilter implements ExceptionFilter {
       return;
     }
 
-    const target = this.resolveRedirectTarget(denial);
+    const target = this.resolveRedirectTarget(denial, exception);
     sendRedirect(res, 303, target);
   }
 
@@ -81,10 +83,15 @@ export class AuthzDenialFilter implements ExceptionFilter {
    * Pick the redirect target from auth-state. An undefined `userRef()` (or no
    * context accessor at all) is treated as unauthenticated.
    */
-  private resolveRedirectTarget(denial: AuthzDenialOptions): string {
+  private resolveRedirectTarget(denial: AuthzDenialOptions, exception: HttpException): string {
     const loginUrl = denial.loginUrl ?? DEFAULT_LOGIN_URL;
     const forbiddenUrl = denial.forbiddenUrl ?? DEFAULT_FORBIDDEN_URL;
-    const authenticated = this.context?.userRef() !== undefined;
+    // The official guard answers a guest with a 401 and a signed-in user with a 403. A
+    // 403 for a guest (a `byId()` miss, a custom guard) still goes to the login page when
+    // nestjs-context says nobody is signed in.
+    const authenticated =
+      !(exception instanceof UnauthorizedException) &&
+      (this.context === undefined || this.context.userRef() !== undefined);
     const target = authenticated ? forbiddenUrl : loginUrl;
     return toSafePath(target, authenticated ? DEFAULT_FORBIDDEN_URL : DEFAULT_LOGIN_URL);
   }

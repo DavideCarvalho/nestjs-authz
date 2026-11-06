@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { AuthzModule, CONTEXT_ACCESSOR, Gate, Policy } from '@dudousxd/nestjs-authz';
+import { AuthzModule, Gate, PolicyFor } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { authorizeResource, authorizeResourceForUser } from '../src/authorize-resource.js';
@@ -11,7 +12,7 @@ class Post {
   ) {}
 }
 
-@Policy(Post)
+@PolicyFor(Post)
 class PostPolicy {
   update(user: { id: number }, post: Post) {
     return post.authorId === user.id;
@@ -21,16 +22,16 @@ class PostPolicy {
   }
 }
 
-// Current context user: #1.
-const stubContext = { userRef: () => ({ type: 'User', id: 1 }) };
+// The official guard's user: always #1.
+const official = AuthorizationModule.forRoot({ getUser: () => ({ id: 1 }) });
 
 describe('authorizeResource — per-instance can map (no request)', () => {
   let gate: Gate;
 
   beforeEach(async () => {
     const mod = await Test.createTestingModule({
-      imports: [AuthzModule.forRoot({ policies: [PostPolicy] })],
-      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+      imports: [official, AuthzModule.forRoot()],
+      providers: [PostPolicy],
     }).compile();
     await mod.init();
     gate = mod.get(Gate);
@@ -38,13 +39,13 @@ describe('authorizeResource — per-instance can map (no request)', () => {
 
   it('returns the right verdicts for an owned post (context user #1)', async () => {
     const post = new Post(10, 1);
-    const can = await authorizeResource(gate, post, ['update', 'delete']);
+    const can = await authorizeResource(gate.forUser({ id: 1 }), post, ['update', 'delete']);
     expect(can).toEqual({ update: true, delete: true });
   });
 
   it('denies for a post owned by someone else', async () => {
     const post = new Post(11, 2);
-    const can = await authorizeResource(gate, post, ['update', 'delete']);
+    const can = await authorizeResource(gate.forUser({ id: 1 }), post, ['update', 'delete']);
     expect(can).toEqual({ update: false, delete: false });
   });
 

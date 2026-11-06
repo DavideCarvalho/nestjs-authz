@@ -1,4 +1,4 @@
-import { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { Gate, PolicyIndex, currentUserOf } from '@dudousxd/nestjs-authz';
 import {
   type CallHandler,
   type ExecutionContext,
@@ -28,7 +28,7 @@ export class AuthzInertiaInterceptor implements NestInterceptor {
 
   constructor(
     private readonly gate: Gate,
-    private readonly policies: PolicyRegistry,
+    private readonly policies: PolicyIndex,
     @Optional()
     @Inject(AUTHZ_INERTIA_OPTIONS)
     private readonly options: AuthzInertiaOptions = {},
@@ -43,15 +43,17 @@ export class AuthzInertiaInterceptor implements NestInterceptor {
     if (!inertia || typeof inertia.share !== 'function') return next.handle();
 
     return from(
-      resolveClassAbilities(this.gate, this.policies, {
-        ...(this.options.abilities !== undefined ? { abilities: this.options.abilities } : {}),
-        ...(this.options.abilityNamer !== undefined
-          ? { abilityNamer: this.options.abilityNamer }
-          : {}),
-        ...(this.options.includeBareMethodNames !== undefined
-          ? { includeBareMethodNames: this.options.includeBareMethodNames }
-          : {}),
-      }),
+      currentUserOf(context).then((user) =>
+        resolveClassAbilities(this.gate.forUser(user), this.policies, {
+          ...(this.options.abilities !== undefined ? { abilities: this.options.abilities } : {}),
+          ...(this.options.abilityNamer !== undefined
+            ? { abilityNamer: this.options.abilityNamer }
+            : {}),
+          ...(this.options.includeBareMethodNames !== undefined
+            ? { includeBareMethodNames: this.options.includeBareMethodNames }
+            : {}),
+        }),
+      ),
     ).pipe(
       switchMap((can) => {
         inertia.share({ [this.propKey]: { can } });

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { AuthzModule, CONTEXT_ACCESSOR, Policy } from '@dudousxd/nestjs-authz';
+import { AuthzModule, PolicyFor } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule, Can } from '@nestjs/authorization';
 import {
   Controller,
   Get,
@@ -18,9 +19,9 @@ import type { InertiaShareable } from '../src/types.js';
 
 class Post {}
 
-@Policy(Post)
+@PolicyFor(Post)
 class PostPolicy {
-  create(user: { id: number } | undefined) {
+  create(user: { id: number } | null) {
     return user?.id === 1;
   }
   publish() {
@@ -28,7 +29,8 @@ class PostPolicy {
   }
 }
 
-const stubContext = { userRef: () => ({ type: 'User', id: 1 }) };
+// The official guard's user: always #1.
+const official = AuthorizationModule.forRoot({ getUser: () => ({ id: 1 }) });
 
 type SharingRequest = { inertia: InertiaShareable & { shared: Record<string, unknown> } };
 
@@ -52,15 +54,16 @@ class FakeInertiaMiddleware implements NestMiddleware {
 class ProbeController {
   // Echo back whatever the interceptor shared, so the test can assert it.
   @Get('probe')
+  @Can.Anyone()
   probe(@Req() req: SharingRequest): unknown {
     return req.inertia.shared;
   }
 }
 
 @Module({
-  imports: [AuthzModule.forRoot({ policies: [PostPolicy] }), AuthzInertiaModule.forRoot()],
+  imports: [official, AuthzModule.forRoot(), AuthzInertiaModule.forRoot()],
   controllers: [ProbeController],
-  providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+  providers: [PostPolicy],
 })
 class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

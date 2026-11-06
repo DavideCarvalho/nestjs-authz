@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import type { ContextAccessor } from '@dudousxd/nestjs-authz';
-import { type ArgumentsHost, ForbiddenException } from '@nestjs/common';
+import { type ArgumentsHost, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthzDenialFilter } from '../src/authz-denial.filter.js';
 import type { AuthzInertiaOptions } from '../src/types.js';
@@ -129,11 +129,20 @@ describe('AuthzDenialFilter', () => {
     expect(res.statusCode).toBeUndefined();
   });
 
-  it('treats a missing context accessor as unauthenticated → /login', () => {
+  it('without nestjs-context, a 403 is a signed-in user → /403', () => {
     const res = fakeRes();
     const filter = new AuthzDenialFilter({});
 
     filter.catch(denial, httpHost({ 'x-inertia': 'true' }, res));
+
+    expect(res.location).toBe('/403');
+  });
+
+  it("the official guard's 401 for a guest → /login", () => {
+    const res = fakeRes();
+    const filter = new AuthzDenialFilter({});
+
+    filter.catch(new UnauthorizedException(), httpHost({ 'x-inertia': 'true' }, res));
 
     expect(res.location).toBe('/login');
   });

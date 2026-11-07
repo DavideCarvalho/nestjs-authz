@@ -223,6 +223,20 @@ has no such option):
    and 403 for a user, same `denied` event. A route with no requirement is let through. The app
    fails to start if the official global guard is still on, because it would keep denying them.
 
+   **The boot log has one expected ERROR in this mode.** `@nestjs/authorization` 0.1.3 checks at
+   startup that a guard enforces each `@Can()`, and it recognizes only its own
+   `AuthorizationGuard` (by a static brand). It does not see `AuthzGuard`, so it logs:
+
+   ```text
+   ERROR [Authorization] @Can() is not enforced on PostController.update, … : AuthorizationModule has
+   globalGuard: false, and these handlers have no @UseGuards(AuthorizationGuard).
+   ```
+
+   That is safe: `AuthzGuard` enforces those handlers. `AuthzModule` logs a line right after it,
+   naming the same handlers. `AuthzGuard` does not carry the brand on purpose: with it, the
+   official check would log every route this mode lets through as "AuthorizationGuard denies every
+   call to …", which is also false. The error goes away at step 4.
+
 2. **Drop the 0.8 guard and move the old decorators.** Remove `RolesGuard` / `CanGuard` from
    `APP_GUARD` and `@UseGuards()`, and rewrite each string `@Can` / `@Policy(Post)` with the table
    above (`@Can('page.documents')` → `@Can(GatePolicy, 'allows', ability('page.documents'))`).

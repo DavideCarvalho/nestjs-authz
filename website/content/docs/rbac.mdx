@@ -147,27 +147,42 @@ import { DataSource } from 'typeorm';
 const store = new TypeOrmAuthzStore(dataSource, { /* options */ });
 ```
 
-You then hand the store to the RBAC module, plugging in the connection through `forRootAsync` so the *app* — not the library — owns the connection token:
+You then hand the store to the RBAC module. When the connection is registered with NestJS's
+[`@nestjs/typeorm`](https://docs.nestjs.com/techniques/database) or
+[`@nestjs/drizzle`](https://docs.nestjs.com/data/drizzle), name it and the module builds the store
+from the official token (`getDataSourceToken(name)` / `getDrizzleToken(name)`):
 
 ```ts
 import { AuthzRbacModule } from '@dudousxd/nestjs-authz-typeorm';
-import { TypeOrmAuthzStore } from '@dudousxd/nestjs-authz-typeorm';
-import { getDataSourceToken } from '@nestjs/typeorm';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({ /* ... */ }),
+    AuthzRbacModule.forRoot({
+      connectionName: 'default', // or the `name` the connection was registered under
+      storeOptions: { schema: 'auth' }, // optional: Postgres schema, tableNames
+      autoCreateSchema: true, // default for TypeORM; non-destructive (see below)
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`forRootAsync({ connectionName, storeOptions, useFactory })` takes the same `connectionName`; its
+factory returns the other options (`userRefFrom`, `autoCreateSchema`). `@nestjs/typeorm` and
+`@nestjs/drizzle` are optional peers. Otherwise build the store from any connection yourself and
+pass it as `store`, the app owning the token:
+
+```ts
+import { AuthzRbacModule, TypeOrmAuthzStore } from '@dudousxd/nestjs-authz-typeorm';
+import { DataSource } from 'typeorm';
 
 @Module({
   imports: [
     AuthzRbacModule.forRootAsync({
-      inject: [getDataSourceToken('auth')], // or [DataSource] for the default connection
-      useFactory: (ds) => ({
-        store: new TypeOrmAuthzStore(ds),
-        autoCreateSchema: true, // default; non-destructive (see below)
-        schema: 'auth', // optional Postgres schema (this is a DB schema, not a connection)
-        tableNames: {
-          roles: 'roles',
-          permissions: 'permissions',
-          roleUser: 'role_user',
-          rolePermission: 'role_permission',
-        },
+      inject: [DataSource], // your connection's token
+      useFactory: (ds: DataSource) => ({
+        store: new TypeOrmAuthzStore(ds, { schema: 'auth' }),
       }),
     }),
   ],

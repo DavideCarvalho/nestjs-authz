@@ -65,6 +65,29 @@ const rows = await db.select().from(posts).where(and(scope, eq(posts.archived, f
 
 ## RBAC store
 
+With the database registered through NestJS's [`@nestjs/drizzle`](https://docs.nestjs.com/data/drizzle),
+name the connection and the module builds the store from `getDrizzleToken(connectionName)`:
+
+```ts
+import { DrizzleModule } from '@nestjs/drizzle';
+import { AuthzRbacModule } from '@dudousxd/nestjs-authz-drizzle';
+
+@Module({
+  imports: [
+    DrizzleModule.forRoot({ drizzle, connection: process.env.DATABASE_URL }),
+    AuthzRbacModule.forRoot({
+      connectionName: 'default', // or the `name` given to DrizzleModule
+      storeOptions: { schema: 'auth' }, // optional: DrizzleAuthzStore options
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`forRootAsync({ connectionName, storeOptions, useFactory })` works the same way, its factory
+returning the other options. `@nestjs/drizzle` is an optional peer. Or build the store yourself
+from any Drizzle database:
+
 ```ts
 import { AuthzRbacModule, DrizzleAuthzStore } from '@dudousxd/nestjs-authz-drizzle';
 

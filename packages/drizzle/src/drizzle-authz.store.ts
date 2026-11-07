@@ -19,8 +19,8 @@ import type {
   TenantScope,
 } from './types.js';
 
-// Re-exported so `@dudousxd/nestjs-authz-drizzle`'s public `UserAuthz` keeps the same import
-// path; canonical definition lives in core's store-kit.
+// These types appear in this store's public method signatures, so the package exports them
+// next to the store. They are defined once in core's store-kit.
 export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /**

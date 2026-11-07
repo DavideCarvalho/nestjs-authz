@@ -14,8 +14,8 @@ import type { EntityManager, MikroORM } from '@mikro-orm/core';
 import { PermissionEntity, RoleEntity, RolePermissionEntity, UserRoleEntity } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
 
-// Re-exported so `@dudousxd/nestjs-authz-mikro-orm`'s public `UserAuthz` keeps the
-// same import path; canonical definition lives in core's store-kit.
+// These types appear in this store's public method signatures, so the package exports them
+// next to the store. They are defined once in core's store-kit.
 export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */

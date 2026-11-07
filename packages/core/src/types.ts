@@ -49,7 +49,33 @@ export type ResourceLoader = (id: string | number) => unknown | Promise<unknown>
 /** Resource loaders keyed by the resource `type` name the client sends (e.g. `'Post'`). */
 export type ResourceLoaderMap = Record<string, ResourceLoader>;
 
-export interface AuthzModuleOptions {
+/**
+ * What happens to a route that declares no `@Can()` (nor `Can.Anyone()` / `@Public()`):
+ * - `'deny'` (default): nothing special; the official `AuthorizationGuard` denies it.
+ * - `'allow'`: the migration mode. `AuthzModule` registers its own global {@link AuthzGuard},
+ *   which enforces the official requirements exactly as the official guard does and lets
+ *   unannotated routes through. Needs `AuthorizationModule.forRoot({ globalGuard: false })`.
+ */
+export type UnannotatedRoutes = 'allow' | 'deny';
+
+/** Options that decide what the module registers, so they are static (read before any factory runs). */
+export interface AuthzModuleStaticOptions {
+  /**
+   * Opt-in `POST /authz/can` endpoint for client checks that are not hydrated. `true`
+   * mounts it at `authz/can`; a string at that path. Off by default.
+   */
+  canEndpoint?: boolean | string;
+  /**
+   * Class decorators applied to every controller this module mounts (the `POST /authz/can`
+   * endpoint), after its own: `[UseGuards(JwtAuthGuard), ApiTags('authz')]`. The controllers
+   * are open to the official guard by default (`Can.Anyone()`); a `@Can()` here restricts them.
+   */
+  decorators?: ClassDecorator[];
+  /** See {@link UnannotatedRoutes}. Default `'deny'`. */
+  unannotated?: UnannotatedRoutes;
+}
+
+export interface AuthzModuleOptions extends AuthzModuleStaticOptions {
   /** The global super-admin hook. See {@link SuperAdminHook}. */
   superAdmin?: SuperAdminHook;
   /**
@@ -69,11 +95,6 @@ export interface AuthzModuleOptions {
   resourceResolver?: ResourceResolver;
   /** Route param the default resolver reads. Default `'id'`. */
   idParam?: string;
-  /**
-   * Opt-in `POST /authz/can` endpoint for client checks that are not hydrated. `true`
-   * mounts it at `authz/can`; a string at that path. Off by default.
-   */
-  canEndpoint?: boolean | string;
   /** Loaders that turn the endpoint's `{ type, id }` into the real entity, keyed by type. */
   resourceLoaders?: ResourceLoaderMap;
 }
@@ -82,14 +103,12 @@ export interface AuthzModuleOptionsFactory {
   createAuthzOptions(): Promise<AuthzModuleOptions> | AuthzModuleOptions;
 }
 
-export interface AuthzModuleAsyncOptions {
+export interface AuthzModuleAsyncOptions extends AuthzModuleStaticOptions {
   imports?: unknown[];
   useExisting?: Type<AuthzModuleOptionsFactory>;
   useClass?: Type<AuthzModuleOptionsFactory>;
   useFactory?: (...args: unknown[]) => Promise<AuthzModuleOptions> | AuthzModuleOptions;
   inject?: unknown[];
-  /** See {@link AuthzModuleOptions.canEndpoint}. Static: controllers are registered before the factory runs. */
-  canEndpoint?: boolean | string;
   /** See {@link AuthzModuleOptions.resourceLoaders}. */
   resourceLoaders?: ResourceLoaderMap;
 }

@@ -1,6 +1,16 @@
 import 'reflect-metadata';
 import { AuthorizationModule } from '@nestjs/authorization';
-import type { INestApplication } from '@nestjs/common';
+import {
+  type CanActivate,
+  type DynamicModule,
+  type ExecutionContext,
+  HttpException,
+  type INestApplication,
+  Injectable,
+  SetMetadata,
+  type Type,
+  UseGuards,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -227,5 +237,106 @@ describe('POST /authz/can — batch (array body)', () => {
     app = await bootstrap(true);
     const res = await request(app.getHttpServer()).post('/authz/can').send([]).expect(201);
     expect(res.body).toEqual([]);
+  });
+});
+
+describe('the controllers AuthzModule mounts: open by default, `decorators` applied', () => {
+  let app: INestApplication | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  /** A guard that answers 418 unless the request carries `x-key: secret`. */
+  @Injectable()
+  class KeyGuard implements CanActivate {
+    canActivate(ctx: ExecutionContext): boolean {
+      const key = ctx.switchToHttp().getRequest<{ headers: Record<string, string> }>().headers[
+        'x-key'
+      ];
+      if (key !== 'secret') throw new HttpException('no key', 418);
+      return true;
+    }
+  }
+
+  const Tagged = (tag: string): ClassDecorator => SetMetadata('test:tag', tag);
+
+  function mountedController(module: DynamicModule): Type<unknown> {
+    const [controller] = (module.controllers ?? []) as Type<unknown>[];
+    if (!controller) throw new Error('no controller mounted');
+    return controller;
+  }
+
+  it('marks every mounted controller open to the official guard (authorization:can-anyone)', () => {
+    const controller = mountedController(AuthzModule.forRoot({ canEndpoint: true }));
+    expect(Reflect.getMetadata('authorization:can-anyone', controller)).toBe(true);
+    const asyncController = mountedController(
+      AuthzModule.forRootAsync({ canEndpoint: true, useFactory: () => ({}) }),
+    );
+    expect(Reflect.getMetadata('authorization:can-anyone', asyncController)).toBe(true);
+  });
+
+  it('applies `decorators` to the controller, without leaking between registrations', () => {
+    const tagged = mountedController(
+      AuthzModule.forRoot({ canEndpoint: true, decorators: [Tagged('first')] }),
+    );
+    const other = mountedController(
+      AuthzModule.forRootAsync({
+        canEndpoint: 'other/can',
+        decorators: [Tagged('second')],
+        useFactory: () => ({}),
+      }),
+    );
+    const plain = mountedController(AuthzModule.forRoot({ canEndpoint: true }));
+    expect(Reflect.getMetadata('test:tag', tagged)).toBe('first');
+    expect(Reflect.getMetadata('test:tag', other)).toBe('second');
+    expect(Reflect.getMetadata('test:tag', plain)).toBeUndefined();
+    expect(tagged).not.toBe(plain);
+  });
+
+  it('a guard given in `decorators` runs on the endpoint', async () => {
+    const mod = await Test.createTestingModule({
+      imports: [
+        official,
+        AuthzModule.forRoot({ canEndpoint: true, decorators: [UseGuards(KeyGuard)] }),
+      ],
+      providers: [PostPolicy],
+    }).compile();
+    app = mod.createNestApplication({ logger: false });
+    await app.init();
+    await request(app.getHttpServer()).post('/authz/can').send({ ability: 'create' }).expect(418);
+    await request(app.getHttpServer())
+      .post('/authz/can')
+      .set('x-key', 'secret')
+      .send({ ability: 'create' })
+      .expect(201, { allowed: true });
+  });
+
+  it('the endpoint answers guests under the official global guard (no @Can needed)', async () => {
+    const mod = await Test.createTestingModule({
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot({ canEndpoint: true })],
+      providers: [PostPolicy],
+    }).compile();
+    app = mod.createNestApplication({ logger: false });
+    await app.init();
+    await request(app.getHttpServer())
+      .post('/authz/can')
+      .send({ ability: 'create' })
+      .expect(201, { allowed: false });
+  });
+
+  it('fails the startup when the forRootAsync() factory returns `decorators`', async () => {
+    await expect(
+      Test.createTestingModule({
+        imports: [
+          official,
+          AuthzModule.forRootAsync({
+            canEndpoint: true,
+            useFactory: (): AuthzModuleOptions => ({ decorators: [Tagged('late')] }),
+          }),
+        ],
+      }).compile(),
+    ).rejects.toThrow(/`decorators` is in the options the forRootAsync\(\) factory returned/);
   });
 });

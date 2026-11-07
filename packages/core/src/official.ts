@@ -11,8 +11,11 @@ export const OFFICIAL_POLICY_METADATA = 'authorization:policy';
 export const OFFICIAL_CAN_METADATA = 'authorization:can';
 /** Written by the official `Can.Anyone()`. */
 export const OFFICIAL_CAN_ANYONE_METADATA = 'authorization:can-anyone';
-/** Written by `@nestjs/authentication`'s `@Public()` (`true`) and `@Authenticate()` (`false`). */
-export const OFFICIAL_PUBLIC_METADATA = 'authentication:public';
+/**
+ * Written by `@nestjs/authentication`'s `@Public()` (`true`) and `@Authenticate()` (`false`).
+ * A registry symbol, which the official guard reads without depending on that package.
+ */
+export const OFFICIAL_PUBLIC_METADATA = Symbol.for('@nestjs/authentication:public');
 
 /** One official `@Can()` requirement, as stored in the metadata. */
 export interface OfficialCanRequirement {

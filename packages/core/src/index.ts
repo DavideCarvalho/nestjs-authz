@@ -7,6 +7,8 @@ export const VERSION = '0.8.1';
 // AuthorizationModule, AuthorizationService, AuthorizationGuard) is imported from there.
 
 export { AuthzModule } from './module.js';
+// Migration mode: `AuthzModule.forRoot({ unannotated: 'allow' })`
+export { AuthzGuard } from './authz.guard.js';
 export { Gate, BoundGate } from './gate.js';
 export type {
   AbilityArgsOf,
@@ -51,6 +53,7 @@ export {
   OFFICIAL_POLICY_METADATA,
   OFFICIAL_CAN_METADATA,
   OFFICIAL_CAN_ANYONE_METADATA,
+  OFFICIAL_PUBLIC_METADATA,
   isOfficialPolicy,
   readCanRequirements,
   routeRequirements,
@@ -148,6 +151,8 @@ export type {
   AuthzModuleOptions,
   AuthzModuleAsyncOptions,
   AuthzModuleOptionsFactory,
+  AuthzModuleStaticOptions,
+  UnannotatedRoutes,
   GateFn,
   PolicyResponse,
   PolicyResult,

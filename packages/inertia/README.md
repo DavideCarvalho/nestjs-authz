@@ -105,11 +105,11 @@ reads it) and returns
 
 ## Client store (framework-neutral)
 
-`@dudousxd/nestjs-authz-inertia/client` is a tiny in-memory store + resolver with no
-framework dependency — `-react` and the codegen client reuse it.
+The store lives in `@dudousxd/nestjs-authz-client`: a tiny in-memory store + resolver with no
+framework dependency — `-react` and the codegen client reuse it. Install it next to this package.
 
 ```ts
-import { AbilityStore, hydrateFromInertiaProps, hydrateResource, createCan } from '@dudousxd/nestjs-authz-inertia/client';
+import { AbilityStore, hydrateFromInertiaProps, hydrateResource, createCan } from '@dudousxd/nestjs-authz-client';
 
 const store = new AbilityStore();
 hydrateFromInertiaProps(store, page.props);              // tier 1: props.auth.can

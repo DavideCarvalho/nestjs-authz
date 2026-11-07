@@ -8,3 +8,7 @@ the official guard reads. `resolveClassAbilities` / `createAuthzShare` take a `P
 (was `PolicyRegistry`) and accept `gate.forUser(user)`. The denial filter also redirects the
 official guard's 401 to `loginUrl`; without nestjs-context a 403 now goes to `forbiddenUrl`.
 Requires `@dudousxd/nestjs-authz` 0.9, NestJS 12 and Node 22+.
+
+**Removed:** the `@dudousxd/nestjs-authz-inertia/client` subpath, which only re-exported the
+client package. Import `AbilityStore`, `createCan`, `hydrateFromInertiaProps` and
+`hydrateResource` from `@dudousxd/nestjs-authz-client` directly.

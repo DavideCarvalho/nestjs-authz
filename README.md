@@ -190,6 +190,7 @@ decorators are gone: move each one to its official form.
 | a persisted permission named like a policy ability grants it | the policy decides (only `superAdmin` bypasses it), in checks and in `scope()` |
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
+| `import … from '@dudousxd/nestjs-authz-inertia/client'` | `import … from '@dudousxd/nestjs-authz-client'` (the subpath is removed) |
 
 Behavior the official guard brings:
 

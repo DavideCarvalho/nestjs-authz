@@ -55,7 +55,6 @@ How each form maps to a client ability:
 | `@Can(PermissionPolicy, 'has', permission('posts.publish'))`, `@Permission('posts.publish')` | `posts.publish` |
 | `@Can(GatePolicy, 'allows', ability('access-admin'))` | `access-admin` |
 | `@Roles(...)`, `@Can(RolePolicy, ...)` | none (roles are not client abilities) |
-| deprecated `@Can('update', Post)` | `update` on `Post` |
 
 the generated `api.ts` gains:
 

@@ -50,5 +50,5 @@ expect(requirementsOf(PostController, 'publish')).toEqual([
 - `FakePermissionProvider` / `FakeRoleProvider` — in-memory RBAC seams keyed by user id.
 - `AuthzAssertionError` — thrown on assertion failure.
 
-Migrating from 0.x: `buildGate` / `buildBoundGate` are now async, take policy classes instead of
+Migrating from 0.1: `buildGate` / `buildBoundGate` are now async, take policy classes instead of
 instances, and the `after` option is gone.

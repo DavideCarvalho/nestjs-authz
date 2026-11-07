@@ -1,17 +1,17 @@
 ---
 name: authz-enforcement
 description: >
-  Enforce authorization with @dudousxd/nestjs-authz 1.x on top of @nestjs/authorization.
+  Enforce authorization with @dudousxd/nestjs-authz 0.9 on top of @nestjs/authorization.
   Routes use the official @Can(Policy, 'ability', argsResolver) and its global guard; our
   helpers go inside it: byId(Post) (loads the :id record with the ResourceResolver, kept for
   the handler via authorizedResource), roles(), permission(), ability(), staticCanArgs()
   (static, marked with Symbol.for('@dudousxd/static-can-args')), and the sugar @Roles /
   @Permission. Services use the Gate: allows/denies/authorize with a policy class or a string
-  ability, allowsMany, forUser, define, hasRole. Covers migrating the deprecated string @Can.
+  ability, allowsMany, forUser, define, hasRole. Covers migrating the 0.8 string @Can.
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "1.0.0"
+  library_version: "0.9.0"
   framework: nestjs
 ---
 
@@ -80,9 +80,11 @@ batch even without nestjs-context, and asks a `DECISION_PROVIDER`'s `decideMany`
 
 ## Common mistakes
 
-### 1. Keeping the deprecated string form
+### 1. Writing the 0.8 string form
 
-| Deprecated | Official |
+0.9 removed it: `@Can` comes from `@nestjs/authorization` and names the policy.
+
+| 0.8 | 0.9 |
 | --- | --- |
 | `@Can('update', Post)` | `@Can(PostPolicy, 'update', byId(Post))` |
 | `@Can('create', Post, { classLevel: true })` | `@Can(PostPolicy, 'create')` |
@@ -97,4 +99,4 @@ Read it with `authorizedResource(req, Post)`.
 `@Can(FlagPolicy, 'on', () => ['billing'])` works, but tools cannot read it without a call.
 Use `staticCanArgs('billing')`.
 
-Source: `packages/core/src/helpers.ts`, `packages/core/src/gate.ts`, `packages/core/src/decorator/`.
+Source: `packages/core/src/helpers.ts`, `packages/core/src/gate.ts`, `packages/core/src/decorator/roles.decorator.ts`.

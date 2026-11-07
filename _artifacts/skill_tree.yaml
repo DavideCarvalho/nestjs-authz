@@ -14,7 +14,7 @@ skills:
     package: "@dudousxd/nestjs-authz"
     path: packages/core/skills/authz-policies/SKILL.md
     type: core
-    summary: "Official @Policy() classes, @PolicyFor link, AuthzPolicy/superAdmin, scope(); deprecated @Policy(Resource)."
+    summary: "Official @Policy() classes, @PolicyFor link, AuthzPolicy/superAdmin, scope(); migrating the 0.8 @Policy(Resource)."
 
   - name: authz-enforcement
     package: "@dudousxd/nestjs-authz"

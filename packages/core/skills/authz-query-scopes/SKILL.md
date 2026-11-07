@@ -15,7 +15,7 @@ description: >
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "1.0.0"
+  library_version: "0.9.0"
   framework: nestjs
 ---
 

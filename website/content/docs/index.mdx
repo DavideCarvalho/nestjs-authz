@@ -109,14 +109,15 @@ user it produced.
 3. **[RBAC](/docs/authz/rbac)** — persisted roles and permissions as `RolePolicy` /
    `PermissionPolicy`, through an opt-in ORM adapter. The core stays zero-DB.
 
-## Migrating from 0.x
+## Migrating from 0.8
 
-0.x had its own engine. 1.0 runs on `@nestjs/authorization`:
+0.8 and earlier had their own engine. 0.9 runs on `@nestjs/authorization`, and the old
+decorators are gone: move each one to its official form.
 
-| 0.x | 1.0 |
+| 0.8 | 0.9 |
 | --- | --- |
-| `@Policy(Post)` | `@Policy()` from `@nestjs/authorization` + `@PolicyFor(Post)` (the old form is deprecated) |
-| `@Can('update', Post)` | `@Can(PostPolicy, 'update', byId(Post))` (the old form is deprecated) |
+| `@Policy(Post)` | `@Policy()` from `@nestjs/authorization` + `@PolicyFor(Post)` (or `@PolicyFor(Post)` alone) |
+| `@Can('update', Post)` | `@Can(PostPolicy, 'update', byId(Post))`, `@Can` from `@nestjs/authorization` |
 | `@Can('create', Post, { classLevel: true })` | `@Can(PostPolicy, 'create')` |
 | `@Can('access-admin')` | `@Can(GatePolicy, 'allows', ability('access-admin'))` |
 | `@Roles('admin')` + `RolesGuard` | `@Roles('admin')`, enforced by the official guard |
@@ -130,8 +131,6 @@ user it produced.
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
 
-The deprecated `@Can` / `@Policy` only write the official metadata, and are removed in 2.0.
-
 <Callout type="warn" title="Behavior the official guard brings">
 **Deny by default**: a handler with no `@Can()` is denied; add `@Can.Anyone()` (or `@Public()`
 from `@nestjs/authentication`) where anyone may call it. **Class and method requirements add
@@ -142,7 +141,7 @@ Deny by default is what the migration mode below defers.
 ## Migrating one controller at a time: `unannotated: 'allow'`
 
 The official guard denies every route that declares no `@Can()`: the app's public routes, and
-every controller another library mounts. 0.x let them through. Turning authorization on for a
+every controller another library mounts. 0.8 let them through. Turning authorization on for a
 large app in one go is rarely possible, so this package has a migration mode (the official guard
 has no such option):
 
@@ -157,17 +156,19 @@ has no such option):
    ```
 
    `AuthzModule` registers its own global `AuthzGuard`. A route with official `@Can()`
-   requirements (class or method, the deprecated string `@Can`, `@Roles`, `@Permission`) is handed
+   requirements (class or method, `@Roles`, `@Permission`) is handed
    to the official `AuthorizationGuard` as is: same `getUser`, same policies, same 401 for a guest
    and 403 for a user, same `denied` event. A route with no requirement is let through. The app
    fails to start if the official global guard is still on, because it would keep denying them.
 
-2. **Drop the 0.x guard.** Remove `RolesGuard` / `CanGuard` from `APP_GUARD` and `@UseGuards()`:
-   the string `@Can('page.documents')` and `@Roles('admin')` keep working, enforced by `AuthzGuard`.
+2. **Drop the 0.8 guard and move the old decorators.** Remove `RolesGuard` / `CanGuard` from
+   `APP_GUARD` and `@UseGuards()`, and rewrite each string `@Can` / `@Policy(Post)` with the table
+   above (`@Can('page.documents')` → `@Can(GatePolicy, 'allows', ability('page.documents'))`).
+   `@Roles('admin')` and `@Permission(...)` are unchanged. All of them are enforced by `AuthzGuard`.
 
 3. **Annotate the open routes**, one controller at a time: `@Can.Anyone()` where anyone may call
    it, `@Public()` (from `@nestjs/authentication`) where no sign-in is needed, a `@Can(...)`
-   everywhere else. Move string `@Can`s to the official form as you go.
+   everywhere else.
 
 4. **Switch to deny by default** when every route declares something: remove `unannotated` (or set
    `'deny'`) and `globalGuard: false`. The official guard is global again, and a forgotten

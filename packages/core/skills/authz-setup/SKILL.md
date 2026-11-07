@@ -1,7 +1,7 @@
 ---
 name: authz-setup
 description: >
-  Set up @dudousxd/nestjs-authz 1.x, the extras on top of NestJS's first-party
+  Set up @dudousxd/nestjs-authz 0.9, the extras on top of NestJS's first-party
   @nestjs/authorization. Import AuthorizationModule.forRoot() (official: global
   deny-by-default AuthorizationGuard, @Can, AuthorizationService, getUser) next to
   AuthzModule.forRoot / forRootAsync (ours: Gate, RolePolicy / PermissionPolicy /
@@ -12,7 +12,7 @@ description: >
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "1.0.0"
+  library_version: "0.9.0"
   framework: nestjs
 ---
 

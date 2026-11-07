@@ -20,7 +20,7 @@ between adapters leaves your data where it is.
 pnpm add @dudousxd/nestjs-authz-drizzle @dudousxd/nestjs-authz @nestjs/authorization drizzle-orm
 ```
 
-Requires NestJS 12, `@nestjs/authorization` ^0.1.3, `@dudousxd/nestjs-authz` 1.x and Node 22+.
+Requires NestJS 12, `@nestjs/authorization` ^0.1.3, `@dudousxd/nestjs-authz` 0.9 and Node 22+.
 `drizzle-orm` is a peer (`>=0.40.0 <1.0.0`). Any Drizzle Postgres driver works:
 `node-postgres`, `postgres-js`, PGlite, Neon, and so on.
 

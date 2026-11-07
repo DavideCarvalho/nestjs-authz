@@ -1,6 +1,6 @@
 # `@dudousxd/nestjs-authz` — DESIGN
 
-> Status: v1 em cima do [`@nestjs/authorization`](https://docs.nestjs.com/security/authorization) (0.1.x, NestJS 12).
+> Status: 0.9 em cima do [`@nestjs/authorization`](https://docs.nestjs.com/security/authorization) (0.1.x, NestJS 12).
 
 ## 1. O que é (e o que NÃO é)
 
@@ -11,7 +11,7 @@ engine de autorização**: quem decide é o oficial.
 
 ## 2. Decisão: em cima do oficial, não paralelo
 
-Até a 0.x tínhamos `@Policy(Resource)`, `@Can('ability', Resource)`, `CanGuard`, `RolesGuard` e
+Até a 0.8 tínhamos `@Policy(Resource)`, `@Can('ability', Resource)`, `CanGuard`, `RolesGuard` e
 um Gate com engine próprio. O NestJS lançou o `@nestjs/authorization` (`@Policy()`, `@Can(Policy,
 'ability', args?)`, `Can.Anyone()`, `AuthorizationGuard` global e deny-by-default,
 `AuthorizationService.can/authorize`, eventos de negação). Regra do dono: **o que o oficial faz,
@@ -276,16 +276,25 @@ escondeu bugs que **só** Postgres/MySQL reais pegam (vide REVIEW.md — bug do 
 - Não reimplementa o engine: decisões de policy são do `@nestjs/authorization`.
 - Core não persiste — RBAC é adapter opt-in.
 
-## 10. Depreciado (uma major) → removido depois
+## 10. Removido na 0.9 (sem shims de compatibilidade)
 
-| Depreciado | Use |
+A 0.9 continua 0.x e não carrega shims: as formas antigas saíram de vez e cada uma vira direto a
+oficial.
+
+| 0.8 | 0.9 |
 |---|---|
 | `@Can('update', Post)` (nosso) | `@Can(PostPolicy, 'update', byId(Post))` (oficial) |
 | `@Can('create', Post, { classLevel: true })` | `@Can(PostPolicy, 'create')` |
 | `@Can('access-admin')` | `@Can(GatePolicy, 'allows', ability('access-admin'))` |
 | `@Policy(Post)` (nosso) | `@Policy()` (oficial) + `@PolicyFor(Post)` |
 
-Removidos já na v1: `CanGuard`, `RolesGuard`, `PolicyRegistry` (→ `PolicyIndex`),
+Fica a API de string do `Gate` (`gate.allows('update', post)`, `gate.allows('posts.publish')`):
+não é compatibilidade, é o que o `AuthorizationService.can(Policy, ability, user, …)` oficial não
+tem — achar a policy pelo recurso (`@PolicyFor`), permissões persistidas, gates ad-hoc
+(`define`), `superAdmin`, o PDP externo e batch (`allowsMany`). É também o contrato do
+`POST /authz/can`, do `GatePolicy`, do inertia e do client (que só conhecem nomes de ability).
+
+Também removidos na 0.9: o `@Can` em string e o `@Policy(Resource)` (com `CanOptions`), `CanGuard`, `RolesGuard`, `PolicyRegistry` (→ `PolicyIndex`),
 `CAN_METADATA`, `ROLES_METADATA`, `AuthzModuleOptions.policies` (→ providers ou
 `AuthorizationModule.forRoot({ policies })`), `after`, `PolicyResponse`,
 `PolicyNotDecoratedException`, `ResourceResolverMissingException`.

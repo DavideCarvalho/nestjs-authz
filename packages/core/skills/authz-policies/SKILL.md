@@ -1,16 +1,16 @@
 ---
 name: authz-policies
 description: >
-  Write policies for @dudousxd/nestjs-authz 1.x: they are official @nestjs/authorization
+  Write policies for @dudousxd/nestjs-authz 0.9: they are official @nestjs/authorization
   policies (@Policy(), abilities taking `user | null`, optional before(), only a literal true
   allows). Our additions: @PolicyFor(Resource) to link a resource to its policy (for
   gate.allows('update', post), gate.scope(Post), client ability maps), the AuthzPolicy base
   class / superAdminBefore() that honor the global superAdmin hook, and a scope(user) method
-  for query scoping. Covers the deprecated @Policy(Resource) from this package.
+  for query scoping. Covers migrating the 0.8 @Policy(Resource).
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "1.0.0"
+  library_version: "0.9.0"
   framework: nestjs
 ---
 
@@ -67,9 +67,10 @@ truthy object denies. Return booleans.
 The official guard runs only the policy's own `before()`. A policy that does not extend
 `AuthzPolicy` (or call `superAdminBefore`) never sees superAdmin on routes.
 
-### 4. The deprecated `@Policy(Post)` from this package
+### 4. Writing the 0.8 `@Policy(Post)`
 
-It still works (it is `@PolicyFor(Post)`) for one major. Use the official `@Policy()` plus
-`@PolicyFor(Post)`, and alias the import if both are in one file.
+0.9 removed it: this package no longer exports `Policy`. Use the official `@Policy()` from
+`@nestjs/authorization` plus `@PolicyFor(Post)` (or `@PolicyFor(Post)` alone, which applies
+`@Policy()` itself).
 
 Source: `packages/core/src/links.ts`, `packages/core/src/policies/authz-policy.ts`.

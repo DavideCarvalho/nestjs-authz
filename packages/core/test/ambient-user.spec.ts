@@ -70,12 +70,30 @@ describe('the ambient user of Gate calls made without forUser()', () => {
     expect(resolveUser).not.toHaveBeenCalled();
   });
 
-  it('falls back to nestjs-context when the AuthenticationContext has no user', async () => {
-    const { gate, auth } = await boot({ authentication: true, ref: { type: 'user', id: 2 } });
-    // Outside a call: AuthenticationContext.user is null.
+  it('an anonymous call in the authentication scope is a guest: nestjs-context is not asked', async () => {
+    const resolveUser = vi.fn((ref: UserRef) => ({ id: Number(ref.id) }));
+    const { gate, auth } = await boot({
+      authentication: true,
+      ref: { type: 'user', id: 2 },
+      authz: { resolveUser },
+    });
+    expect(await auth?.run(null, () => gate.allows('update', new Post(2)))).toBe(false);
+    await expect(
+      auth?.run(null, () => gate.authorize('update', new Post(2))),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(resolveUser).not.toHaveBeenCalled();
+  });
+
+  it('falls back to nestjs-context outside any authentication scope', async () => {
+    const resolveUser = vi.fn((ref: UserRef) => ({ id: Number(ref.id) }));
+    const { gate } = await boot({
+      authentication: true,
+      ref: { type: 'user', id: 2 },
+      authz: { resolveUser },
+    });
+    // A queue worker or cron job: @nestjs/authentication is set up, but no call is handled.
     expect(await gate.allows('update', new Post(2))).toBe(true);
-    // An anonymous call too.
-    expect(await auth?.run(null, () => gate.allows('update', new Post(2)))).toBe(true);
+    expect(resolveUser).toHaveBeenCalledTimes(1);
   });
 
   it('uses nestjs-context when @nestjs/authentication is not set up', async () => {

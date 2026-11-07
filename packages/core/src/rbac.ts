@@ -25,9 +25,15 @@ const REQUEST_PERMISSION_CACHE = Symbol.for('@dudousxd/nestjs-authz:request-perm
 /** Key under which the per-request `resolveUser` results are stashed on the context store. */
 const REQUEST_USERS = Symbol.for('@dudousxd/nestjs-authz:request-users');
 
-/** The slice of `@nestjs/authentication`'s `AuthenticationContext` read here. */
+/**
+ * The slice of `@nestjs/authentication`'s `AuthenticationContext` read here. `scope` is its
+ * (TypeScript-private) `AuthenticationScope`: `scope.current` is set inside a call the package
+ * handles (its interceptor opened it) and inside `AuthenticationContext.run()`, and `undefined`
+ * elsewhere. The package exports no other way to tell "anonymous" from "no scope".
+ */
 interface AuthenticationContextLike {
   readonly user: unknown;
+  readonly scope?: { readonly current?: unknown };
 }
 
 /**
@@ -128,14 +134,15 @@ export class AuthzRbac implements OnModuleInit {
    * The user for a `Gate` call made without one:
    *
    * 1. `@nestjs/authentication`'s `AuthenticationContext.user`, when that optional peer is
-   *    installed and has a user for this call;
-   * 2. else nestjs-context's user ref, hydrated by `resolveUser` when configured (once per
-   *    `type:id` per request);
+   *    installed and its scope is active (a call it handles, or `AuthenticationContext.run()`):
+   *    its answer is final, so a `null` there is a guest;
+   * 2. else, with no authentication scope at all, nestjs-context's user ref, hydrated by
+   *    `resolveUser` when configured (once per `type:id` per request);
    * 3. else `null` (a guest).
    */
   async currentUser(): Promise<User> {
     const authenticated = this.authenticatedUser();
-    if (authenticated != null) return authenticated;
+    if (authenticated !== undefined) return authenticated;
 
     const context = this.contextAccessor();
     if (!context) return null;
@@ -161,10 +168,20 @@ export class AuthzRbac implements OnModuleInit {
     return pending;
   }
 
-  /** `AuthenticationContext.user`, or `undefined` without the package or outside a call. */
+  /**
+   * `AuthenticationContext.user` (`null` for an anonymous call) when its scope is active;
+   * `undefined` without the package or outside its scope. A version that hides the scope is
+   * read as before: a user is an answer, `null` is not.
+   */
   private authenticatedUser(): unknown {
+    const authentication = this.authentication;
+    if (!authentication) return undefined;
     try {
-      return this.authentication?.user ?? undefined;
+      const scope = authentication.scope;
+      if (scope && typeof scope === 'object' && 'current' in scope) {
+        return scope.current === undefined ? undefined : (authentication.user ?? null);
+      }
+      return authentication.user ?? undefined;
     } catch {
       return undefined;
     }

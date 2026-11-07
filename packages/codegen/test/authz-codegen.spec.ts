@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { nestjsAuthzCodegen } from '../src/index.js';
 
 // A ts-morph project with one in-memory controller + policy, mirroring how the host hands the
-// extension a shared `ctx.project()`. The extension reads `@Can`/`@Policy` decorators off the AST.
+// extension a shared `ctx.project()`. The extension reads the `@Can`/`@Policy()`/`@PolicyFor` decorators off the AST.
 function projectWith(source: string, filePath = '/src/posts.controller.ts'): Project {
   const project = new Project({ useInMemoryFileSystem: true });
   project.createSourceFile(filePath, source);
@@ -28,21 +28,22 @@ function ctxWith(project: Project) {
 
 const CONTROLLER = `
 import { Controller, Post as HttpPost, Patch } from '@nestjs/common';
-import { Can } from '@dudousxd/nestjs-authz';
+import { Can } from '@nestjs/authorization';
+import { GatePolicy, ability, byId } from '@dudousxd/nestjs-authz';
 class Post {}
 
 @Controller('posts')
 export class PostsController {
   @Patch(':id')
-  @Can('update', Post)
+  @Can(PostPolicy, 'update', byId(Post))
   update() {}
 
   @HttpPost()
-  @Can('create', Post, { classLevel: true })
+  @Can(PostPolicy, 'create')
   create() {}
 
   @HttpPost(':id/publish')
-  @Can('access-admin')
+  @Can(GatePolicy, 'allows', ability('access-admin'))
   publish() {}
 }
 `;
@@ -155,14 +156,14 @@ describe('nestjsAuthzCodegen', () => {
     expect(ext.apiHeader?.(ctx)).toBeUndefined();
   });
 
-  it('discovers @Policy method names as class-level abilities when enabled', () => {
+  it('discovers @PolicyFor method names as class-level abilities when enabled', () => {
     const ext = nestjsAuthzCodegen();
     const project = projectWith(
       `
-      import { Policy } from '@dudousxd/nestjs-authz';
-      class Post {}
-      @Policy(Post)
-      export class PostPolicy {
+      import { PolicyFor } from '@dudousxd/nestjs-authz';
+      class Article {}
+      @PolicyFor(Article)
+      export class ArticleRules {
         before() {}
         update() { return true; }
         publish() { return true; }
@@ -176,7 +177,7 @@ describe('nestjsAuthzCodegen', () => {
     // `before` is skipped (it's the policy hook, not an ability); update/publish are abilities.
     expect(out).toContain('export type AuthzAbility = "update" | "publish";');
     expect(out).toContain(
-      'export const authzAbilities = { "Post": ["update", "publish"] } as const;',
+      'export const authzAbilities = { "Article": ["update", "publish"] } as const;',
     );
   });
 

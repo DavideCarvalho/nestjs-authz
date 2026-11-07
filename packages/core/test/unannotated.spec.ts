@@ -12,10 +12,11 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AuthzGuard } from '../src/authz.guard.js';
-import { Can as LegacyCan } from '../src/decorator/can.decorator.js';
 import { Permission, Roles } from '../src/decorator/roles.decorator.js';
 import { Gate } from '../src/gate.js';
+import { ability } from '../src/helpers.js';
 import { AuthzModule } from '../src/module.js';
+import { GatePolicy } from '../src/policies/gate.policy.js';
 import { PERMISSION_PROVIDER } from '../src/tokens.js';
 import type { AuthzModuleAsyncOptions, AuthzModuleOptions } from '../src/types.js';
 import { asUser, permissionTable, userFromHeader } from './support/app.js';
@@ -61,7 +62,7 @@ class ReportController {
   }
 
   @Get('documents')
-  @LegacyCan('page.documents')
+  @Can(GatePolicy, 'allows', ability('page.documents'))
   documents() {
     return { ok: true };
   }
@@ -166,7 +167,7 @@ describe("AuthzModule.forRoot({ unannotated: 'allow' }) — the migration mode",
     await request(http).get('/reports/view').expect(401);
   });
 
-  it('enforces the string @Can, @Roles and @Permission sugar', async () => {
+  it('enforces GatePolicy, @Roles and @Permission', async () => {
     app = await boot();
     const http = app.getHttpServer();
     await request(http)

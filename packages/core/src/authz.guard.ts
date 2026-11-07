@@ -15,8 +15,8 @@ const OFFICIAL_GUARD_BRAND = Symbol.for('@nestjs/authorization:guard');
 /**
  * The migration guard `AuthzModule.forRoot({ unannotated: 'allow' })` registers globally.
  *
- * A route with official `@Can()` requirements (on the class or the method, including the
- * deprecated string `@Can`, `@Roles` and `@Permission`, which write the same metadata) is
+ * A route with official `@Can()` requirements (on the class or the method, including
+ * `@Roles` and `@Permission`, which write the same metadata) is
  * handed to the official `AuthorizationGuard` as is: the same evaluator, the same `getUser`,
  * the same 401/403, the same denied event. A route that declares no requirement is let
  * through, where the official guard would deny it. That lets an app turn authorization on

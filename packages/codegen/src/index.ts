@@ -8,14 +8,14 @@ import { type ClassDeclaration, Node, type Project, type SourceFile, SyntaxKind 
 
 /**
  * A client ability discovered on a controller route (the official `@Can(Policy, 'ability', ...)`,
- * `@Permission`, or the deprecated string `@Can`), or on a policy class (`@Policy()`,
+ * or `@Permission`), or on a policy class (`@Policy()`,
  * `@PolicyFor(Resource)`). Read statically from the AST: reflect-metadata is not available at
  * codegen time.
  */
 export interface AuthzAbilityInfo {
   /** The ability string, e.g. `'update'` or `'access-admin'`. */
   ability: string;
-  /** The resource class name the ability targets, when `@Can(ability, Resource)` names one. */
+  /** The resource class name the ability targets (from `byId(Resource)` or the policy's link). */
   resource?: string;
 }
 
@@ -35,7 +35,7 @@ export interface AuthzCodegenOptions {
    */
   endpoint?: string;
   /**
-   * Also discover `@Policy(Resource)` classes and treat their public method names as class-level
+   * Also discover `@Policy()` / `@PolicyFor(Resource)` classes and treat their public method names as class-level
    * abilities (so e.g. `PostPolicy.publish` contributes `'publish'` to the union even when no
    * route is decorated with it yet). Default `true`.
    */
@@ -61,8 +61,7 @@ function callOf(node: Node | undefined): { name: string; args: Node[] } | undefi
 }
 
 /**
- * The resource a policy class is linked to: `@PolicyFor(Post)` (or the deprecated
- * `@Policy(Post)`), else the class name without `Policy` (`PostPolicy` → `Post`).
+ * The resource a policy class is linked to: `@PolicyFor(Post)`, else the class name without `Policy` (`PostPolicy` → `Post`).
  */
 function resourceOfPolicy(policyName: string, project: Project): string | undefined {
   for (const sourceFile of project.getSourceFiles()) {
@@ -84,7 +83,6 @@ function resourceOfPolicy(policyName: string, project: Project): string | undefi
  * - `@Can(PermissionPolicy, 'has', permission('posts.publish'))` / `@Permission('posts.publish')`
  *   → the named permissions, model-less
  * - `@Can(GatePolicy, 'allows', ability('access-admin'))` → `access-admin`
- * - deprecated `@Can('update', Post)` → `update` on `Post`
  *
  * Roles (`@Roles`, `RolePolicy`) are not client abilities.
  */
@@ -93,11 +91,6 @@ function readCanDecorator(name: string, args: Node[], project: Project): AuthzAb
   if (name !== 'Can') return [];
   const [first, second, third] = args;
   if (!first) return [];
-  if (Node.isStringLiteral(first)) {
-    const info: AuthzAbilityInfo = { ability: first.getLiteralValue() };
-    if (second && Node.isIdentifier(second)) info.resource = second.getText();
-    return [info];
-  }
   if (!Node.isIdentifier(first) || !second || !Node.isStringLiteral(second)) return [];
   const policy = first.getText();
   const ability = second.getLiteralValue();
@@ -148,7 +141,7 @@ function discoverRouteAbilities(route: RouteDescriptor, project: Project): Authz
   return [...(method ? abilitiesOn(method, project) : []), ...abilitiesOn(classDecl, project)];
 }
 
-/** Names that make a class a policy: the official `@Policy()`, `@PolicyFor(X)`, the deprecated `@Policy(X)`. */
+/** Names that make a class a policy: the official `@Policy()` and `@PolicyFor(X)`. */
 const POLICY_DECORATORS = new Set(['Policy', 'PolicyFor']);
 
 /** Members of a policy that are not abilities. */
@@ -178,10 +171,10 @@ function discoverPolicyAbilities(project: Project): AuthzAbilityInfo[] {
   return found;
 }
 
-/** `@PolicyFor(Post)` / deprecated `@Policy(Post)` → `'Post'`; `undefined` for the official `@Policy()`. */
+/** `@PolicyFor(Post)` → `'Post'`; `undefined` without the link (the official `@Policy()` alone). */
 function resourceNameFromPolicy(classDecl: ClassDeclaration): string | undefined {
   for (const decorator of classDecl.getDecorators()) {
-    if (!POLICY_DECORATORS.has(decorator.getName())) continue;
+    if (decorator.getName() !== 'PolicyFor') continue;
     const arg = decorator.getArguments()[0];
     if (arg && Node.isIdentifier(arg)) return arg.getText();
   }
@@ -293,8 +286,8 @@ function markerOf(route: RouteDescriptor): AuthzRouteMarker | undefined {
 }
 
 /**
- * `@dudousxd/nestjs-authz` codegen extension. Discovers every `@Can(ability, Resource?)` decorator
- * on your controllers (and, optionally, `@Policy` method abilities) and emits a typed `can()` helper
+ * `@dudousxd/nestjs-authz` codegen extension. Discovers every official `@Can(Policy, 'ability', ...)`
+ * (and `@Permission`) on your controllers (and, optionally, the methods of `@Policy()` classes) and emits a typed `can()` helper
  * into your generated `api.ts`: `ability` is a string-literal union of the discovered abilities, so a
  * wrong ability is a compile error. The runtime `can()` delegates to `@dudousxd/nestjs-authz-client`
  * (a shared `AbilityStore` + `createCan`) — so a hydrated decision answers with no request, and a

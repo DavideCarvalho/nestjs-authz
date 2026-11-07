@@ -61,11 +61,6 @@ export {
 export type { OfficialCanRequirement } from './official.js';
 export { currentUserOf } from './runtime.js';
 
-// Deprecated: kept for one major version, translated to the official metadata
-export { Can } from './decorator/can.decorator.js';
-export type { CanOptions } from './decorator/can.decorator.js';
-export { Policy } from './decorator/policy.decorator.js';
-
 // RBAC seams
 export { AuthzRbac } from './rbac.js';
 export type { PermissionProvider } from './permission-provider.js';

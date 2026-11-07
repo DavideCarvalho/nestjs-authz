@@ -3,12 +3,11 @@ import { Can, Policy } from '@nestjs/authorization';
 import { Controller, Get, type INestApplication, Req } from '@nestjs/common';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Can as LegacyCan } from '../src/decorator/can.decorator.js';
-import { Policy as LegacyPolicy } from '../src/decorator/policy.decorator.js';
 import { Permission, Roles } from '../src/decorator/roles.decorator.js';
-import { authorizedResource, byId, permission, roles } from '../src/helpers.js';
+import { ability, authorizedResource, byId, permission, roles } from '../src/helpers.js';
 import { PolicyFor } from '../src/links.js';
 import { AuthzPolicy } from '../src/policies/authz-policy.js';
+import { GatePolicy } from '../src/policies/gate.policy.js';
 import { PermissionPolicy } from '../src/policies/permission.policy.js';
 import { RolePolicy } from '../src/policies/role.policy.js';
 import { IdParamResourceResolver, type ResourceResolver } from '../src/resource-resolver.js';
@@ -42,8 +41,8 @@ class Comment {
   id?: string;
 }
 
-/** Linked with the deprecated decorator. */
-@LegacyPolicy(Comment)
+/** Linked with `@PolicyFor` alone (which applies the official `@Policy()`). */
+@PolicyFor(Comment)
 class CommentPolicy {
   edit(user: User | null, comment: Comment) {
     return user?.id === Number(comment.id);
@@ -113,29 +112,17 @@ class PostController {
   }
 }
 
-@Controller('legacy')
-class LegacyController {
-  @Get('posts/new')
-  @LegacyCan('create', Post, { classLevel: true })
-  create() {
-    return { ok: true };
-  }
-
-  @Get('posts/:id')
-  @LegacyCan('view', Post)
-  view() {
-    return { ok: true };
-  }
-
-  @Get('comments/:id')
-  @LegacyCan('edit', Comment)
-  edit() {
-    return { ok: true };
-  }
-
+@Controller('comments')
+class CommentController {
   @Get('admin')
-  @LegacyCan('access-admin')
+  @Can(GatePolicy, 'allows', ability('access-admin'))
   admin() {
+    return { ok: true };
+  }
+
+  @Get(':id')
+  @Can(CommentPolicy, 'edit', byId(Comment))
+  edit() {
     return { ok: true };
   }
 }
@@ -150,7 +137,7 @@ describe('routes on the official guard', () => {
   async function boot() {
     const permissions = permissionTable({ '1': ['posts.*'], '2': ['posts.publish'] });
     ({ app } = await bootApp({
-      controllers: [PostController, LegacyController],
+      controllers: [PostController, CommentController],
       providers: [PostPolicy, CommentPolicy],
       authz: { resourceResolver: resolver, superAdmin: (u) => (u as User | null)?.root === true },
       permissions: permissions.provider,
@@ -248,80 +235,32 @@ describe('routes on the official guard', () => {
     await request(http).get('/posts/admin').set(root).expect(200);
     await request(http).get('/posts/moderate').set(root).expect(200);
     // CommentPolicy does not extend AuthzPolicy: superAdmin does not reach it.
-    await request(http).get('/legacy/comments/3').set(root).expect(403);
+    await request(http).get('/comments/3').set(root).expect(403);
   });
 
-  describe('deprecated string @Can and @Policy(Resource)', () => {
-    it('@Can(ability, Resource) runs the linked policy with byId(Resource)', async () => {
-      const http = await boot();
-      await request(http)
-        .get('/legacy/posts/5')
-        .set(asUser({ id: 1 }))
-        .expect(200);
-      await request(http)
-        .get('/legacy/posts/150')
-        .set(asUser({ id: 1 }))
-        .expect(403);
-      await request(http)
-        .get('/legacy/comments/3')
-        .set(asUser({ id: 3 }))
-        .expect(200);
-      await request(http)
-        .get('/legacy/comments/3')
-        .set(asUser({ id: 4 }))
-        .expect(403);
-    });
-
-    it('classLevel runs the ability with the user only', async () => {
-      const http = await boot();
-      await request(http)
-        .get('/legacy/posts/new')
-        .set(asUser({ id: 1 }))
-        .expect(200);
-      await request(http).get('/legacy/posts/new').expect(401);
-    });
-
-    it('@Can(ability) runs a gate.define() gate through GatePolicy', async () => {
-      const http = await boot();
-      const { Gate } = await import('../src/gate.js');
-      app.get(Gate).define('access-admin', (u) => (u as User).id === 1);
-      await request(http)
-        .get('/legacy/admin')
-        .set(asUser({ id: 1 }))
-        .expect(200);
-      await request(http)
-        .get('/legacy/admin')
-        .set(asUser({ id: 2 }))
-        .expect(403);
-    });
-
-    it('fails at startup when the resource has no linked policy', async () => {
-      class Orphan {}
-      @Controller('orphans')
-      class OrphanController {
-        @Get(':id')
-        @LegacyCan('view', Orphan)
-        view() {
-          return {};
-        }
-      }
-      await expect(bootApp({ controllers: [OrphanController] })).rejects.toThrow(
-        /no policy is linked to Orphan/,
-      );
-    });
+  it('byId(Comment) runs the policy linked with @PolicyFor alone', async () => {
+    const http = await boot();
+    await request(http)
+      .get('/comments/3')
+      .set(asUser({ id: 3 }))
+      .expect(200);
+    await request(http)
+      .get('/comments/3')
+      .set(asUser({ id: 4 }))
+      .expect(403);
   });
 
-  it('the official startup check still catches a typo in a deprecated @Can', async () => {
-    @Controller('typo')
-    class TypoController {
-      @Get(':id')
-      @LegacyCan('veiw', Post)
-      view() {
-        return {};
-      }
-    }
-    await expect(
-      bootApp({ controllers: [TypoController], providers: [PostPolicy] }),
-    ).rejects.toThrow(/PostPolicy has no ability 'veiw'/);
+  it('GatePolicy runs a gate.define() gate', async () => {
+    const http = await boot();
+    const { Gate } = await import('../src/gate.js');
+    app.get(Gate).define('access-admin', (u) => (u as User).id === 1);
+    await request(http)
+      .get('/comments/admin')
+      .set(asUser({ id: 1 }))
+      .expect(200);
+    await request(http)
+      .get('/comments/admin')
+      .set(asUser({ id: 2 }))
+      .expect(403);
   });
 });

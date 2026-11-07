@@ -12,8 +12,9 @@ The guiding principle across the ecosystem: **the integration lives on the side 
 ## Current user — `@nestjs/authentication` and `@dudousxd/nestjs-context`
 
 Routes use the official `getUser`. For `Gate` calls without `forUser`, authz reads
-`@nestjs/authentication`'s `AuthenticationContext.user` first, then
-[`@dudousxd/nestjs-context`](/docs/context)'s user ref (hydrated by `resolveUser`). nestjs-context
+`@nestjs/authentication`'s `AuthenticationContext.user` inside its scope (where `null` is a
+guest), and only outside it [`@dudousxd/nestjs-context`](/docs/context)'s user ref (hydrated by
+`resolveUser`). nestjs-context
 also carries the per-request permission cache and the tenant for tenant-scoped roles. Both are
 optional peers, consumed without a hard import. See [Current user](/docs/authz/current-user).
 

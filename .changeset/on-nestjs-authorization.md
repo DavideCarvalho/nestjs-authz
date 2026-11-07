@@ -34,7 +34,19 @@ args?)`, `Can.Anyone()`), the global deny-by-default `AuthorizationGuard`, the c
   `RolePolicy` / `PermissionPolicy` and `Gate` calls share one `getPermissions`, one
   `getRoles` and one `resolveUser` per user per request.
 - `Gate` calls without `forUser()` read `@nestjs/authentication`'s `AuthenticationContext.user`
-  first (optional peer, resolved through `ModuleRef`), then nestjs-context's user ref.
+  (optional peer, resolved through `ModuleRef`). Inside its scope (a call it handles, or
+  `AuthenticationContext.run()`) its answer is final, so an anonymous call is a guest;
+  nestjs-context's user ref is read only when there is no authentication scope at all.
+- A migration mode, `AuthzModule.forRoot({ unannotated: 'allow' })` (`forRootAsync`: next to
+  `useFactory`), for apps that cannot annotate every route at once. With
+  `AuthorizationModule.forRoot({ globalGuard: false })`, it registers a global `AuthzGuard` that
+  hands every route with `@Can()` requirements to the official `AuthorizationGuard` (same user,
+  401/403 and `denied` event) and lets unannotated routes through. The startup fails if the
+  official global guard is still on. Default `'deny'`: nothing is registered. `AuthzGuard` is
+  exported for `@UseGuards()`.
+- `decorators?: ClassDecorator[]`: class decorators applied to every controller the module
+  mounts (the `POST /authz/can` endpoint), which are open to the official guard by default
+  (`authorization:can-anyone`). `canEndpoint` and `decorators` are static options.
 
 **Deprecated** (removed in 2.0; they only write official metadata): the string
 `@Can('update', Post)` → `@Can(PostPolicy, 'update', byId(Post))`; `{ classLevel: true }` →
@@ -54,7 +66,7 @@ checks and in `gate.scope()`; only `superAdmin` does. Permissions still grant na
 no policy defines (`posts.publish`).
 
 **Behavior changes from the official guard:** routes with no `@Can()` are denied (add
-`@Can.Anyone()`); class- and method-level requirements add up; guests reach policies as
+`@Can.Anyone()`, or migrate with `unannotated: 'allow'`); class- and method-level requirements add up; guests reach policies as
 `null` and are answered 401; only a literal `true` allows; `superAdmin` applies to policies
 that extend `AuthzPolicy` (and to the built-in ones, string `Gate` checks and `gate.scope`).
 `gate.hasRole()` stays a plain fact (no `superAdmin`); `RolePolicy` honors it. A

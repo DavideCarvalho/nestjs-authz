@@ -15,7 +15,29 @@ See the [official docs](https://docs.nestjs.com/security/authorization). What it
   `@Public()` on a method drops the class's.
 - **Guests reach policies as `null`**, and a guest denial is a 401; a signed-in one is a 403.
 
-This package adds what goes inside the official `@Can()`.
+This package adds what goes inside the official `@Can()`, and a migration mode that defers deny
+by default.
+
+## Unannotated routes: `unannotated: 'allow'`
+
+```ts
+AuthorizationModule.forRoot({ globalGuard: false }),
+AuthzModule.forRoot({ unannotated: 'allow' }),   // forRootAsync({ unannotated, useFactory })
+```
+
+`AuthzModule` then registers a global `AuthzGuard` in place of the official one. A route with
+`@Can()` requirements is handed to the official `AuthorizationGuard`: same `getUser`, same
+evaluation, same 401/403 and `denied` event, `Can.Anyone()` and `@Public()` respected. A route
+with none is let through. The default, `'deny'`, registers nothing. `AuthzGuard` is exported, for
+`@UseGuards(AuthzGuard)` on part of an app.
+
+<Callout type="warn">
+The app fails to start when `unannotated: 'allow'` is on and the official global guard too: the
+official guard would still deny the unannotated routes, so the option would do nothing. Pass
+`globalGuard: false`. `unannotated` decides what the module registers, so under `forRootAsync` it
+goes next to `useFactory`; a factory that returns it fails the startup. See the
+[step-by-step migration](/docs/authz#migrating-one-controller-at-a-time-unannotated-allow).
+</Callout>
 
 ## Argument helpers
 
@@ -91,7 +113,20 @@ It answers `{ ability, resource?: { type, id } }` (or an array of them, for a ba
 the real record so the linked policy's instance abilities run; without one, only class-level
 abilities and ad-hoc gates resolve. Unknown or ambiguous abilities answer `{ allowed: false }`.
 
-Under `forRootAsync`, set `canEndpoint` (and `resourceLoaders`) on the async options themselves:
+The endpoint is open to the official guard (`authorization:can-anyone` on its class), since it
+answers guests too (with `false`s). To put it behind your own guards, or tag it for OpenAPI, pass
+`decorators`, applied to every controller the module mounts, after its own:
+
+```ts
+AuthzModule.forRoot({
+  canEndpoint: true,
+  decorators: [UseGuards(JwtAuthGuard), ApiTags('authz')],
+});
+```
+
+Each registration builds its own controller class, so decorators never leak between two.
+
+Under `forRootAsync`, set `canEndpoint` and `decorators` on the async options themselves:
 controllers are registered before the factory runs.
 
 ## Next steps

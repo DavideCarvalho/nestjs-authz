@@ -39,7 +39,7 @@ pnpm add @nestjs/authorization @dudousxd/nestjs-authz
 
 Requires NestJS 12 and Node 22+. Two optional peers: `@nestjs/authentication` gives the `Gate`
 its ambient user (`AuthenticationContext.user`); `@dudousxd/nestjs-context` gives it one too
-(when `@nestjs/authentication` has none), plus the per-request permission cache and
+(outside an authentication scope), plus the per-request permission cache and
 tenant-scoped roles.
 
 ```ts
@@ -155,10 +155,12 @@ Policy decisions are always the official service's. `authorize()` throws the off
 Without `forUser`, the user is, in order:
 
 1. `@nestjs/authentication`'s `AuthenticationContext.user`, when that optional peer is
-   installed and its module imported (found through Nest's `ModuleRef`), and it has a user for
-   this call: an `AsyncLocalStorage`-backed context, correct in handlers and everything they
-   await;
-2. nestjs-context's user ref, hydrated by `resolveUser` (once per request) when configured;
+   installed and its module imported (found through Nest's `ModuleRef`), and its scope is active:
+   a call it handles, or `AuthenticationContext.run()`. Its answer is final there: `null` is a
+   guest, and nestjs-context is not asked. It is `AsyncLocalStorage`-backed, correct in handlers
+   and everything they await;
+2. outside any authentication scope (a queue worker, a cron job, or without the package),
+   nestjs-context's user ref, hydrated by `resolveUser` (once per request) when configured;
 3. a guest (`null`).
 
 ## Decisions
@@ -183,7 +185,7 @@ package publishes denials only, on `nestjs:authorization:denied`.
 | `superAdmin` applied everywhere | applied by `AuthzPolicy` subclasses, the built-in policies and the `Gate` |
 | `after` hook, `{ allowed, message }` results | removed: only a literal `true` allows |
 | current user from nestjs-context on routes | the official `getUser` (default `request.user`) |
-| `gate.allows()` user from nestjs-context | `AuthenticationContext.user` first, then nestjs-context |
+| `gate.allows()` user from nestjs-context | `AuthenticationContext.user` inside its scope (`null` there is a guest), nestjs-context outside it |
 | a persisted permission named like a policy ability grants it | the policy decides (only `superAdmin` bypasses it), in checks and in `scope()` |
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
@@ -197,6 +199,42 @@ Behavior the official guard brings:
 - **Class and method requirements add up.** A class-level `@Roles` no longer gives way to the
   method's.
 - **Guests reach the policy as `null`.** Type the user `User | null`; a guest denial is a 401.
+
+### Migrating one controller at a time: `unannotated: 'allow'`
+
+The official guard denies every route that declares no `@Can()`: the app's public routes, and
+every controller another library mounts. 0.x let them through. Turning authorization on for a
+large app in one go is rarely possible, so this package has a migration mode (the official guard
+has no such option):
+
+1. **Turn the official global guard off**, and switch the migration mode on:
+
+   ```ts
+   imports: [
+     AuthenticationModule.forRoot({ ... }),                 // or your Passport guard, first
+     AuthorizationModule.forRoot({ globalGuard: false }),
+     AuthzModule.forRoot({ unannotated: 'allow' }),         // forRootAsync: next to useFactory
+   ]
+   ```
+
+   `AuthzModule` registers its own global `AuthzGuard`. A route with official `@Can()`
+   requirements (class or method, the deprecated string `@Can`, `@Roles`, `@Permission`) is handed
+   to the official `AuthorizationGuard` as is: same `getUser`, same policies, same 401 for a guest
+   and 403 for a user, same `denied` event. A route with no requirement is let through. The app
+   fails to start if the official global guard is still on, because it would keep denying them.
+
+2. **Drop the 0.x guard.** Remove `RolesGuard` / `CanGuard` from `APP_GUARD` and `@UseGuards()`:
+   the string `@Can('page.documents')` and `@Roles('admin')` keep working, enforced by `AuthzGuard`.
+
+3. **Annotate the open routes**, one controller at a time: `@Can.Anyone()` where anyone may call
+   it, `@Public()` (from `@nestjs/authentication`) where no sign-in is needed, a `@Can(...)`
+   everywhere else. Move string `@Can`s to the official form as you go.
+
+4. **Switch to deny by default** when every route declares something: remove `unannotated` (or set
+   `'deny'`) and `globalGuard: false`. The official guard is global again, and a forgotten
+   `@Can()` is a 403 instead of an open route.
+
+A route that slipped through in step 3 is open in this mode, so keep it for the migration only.
 
 ## External policy engines (Cerbos, OPA, …)
 

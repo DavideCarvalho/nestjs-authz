@@ -38,9 +38,12 @@ When no user is passed, the `Gate` looks, in order:
    installed and its module imported. Authz loads the package lazily and finds the
    `AuthenticationContext` through Nest's `ModuleRef`, so nothing breaks without it. It is an
    `AsyncLocalStorage`-backed context: correct in the handler and in everything it calls or
-   awaits, however many requests run at once. Outside a call (or for an anonymous one) it has no
-   user, and the next source is asked.
-2. **[`@dudousxd/nestjs-context`](/docs/context)'s user ref** — a `{ type, id }` read through the
+   awaits, however many requests run at once. **Inside its scope** (a call it handles, or
+   `AuthenticationContext.run()`) its answer is final: an anonymous call is a guest, and
+   nestjs-context is not asked. Outside any authentication scope (a queue worker, a cron job, a
+   guard that runs before its interceptor), the next source is asked.
+2. **[`@dudousxd/nestjs-context`](/docs/context)'s user ref**, only when there is no
+   authentication scope — a `{ type, id }` read through the
    `CONTEXT_ACCESSOR` token (consumed structurally; authz never imports nestjs-context). Configure
    `resolveUser` to hydrate it into your entity:
 
@@ -62,7 +65,7 @@ id, or prefer `forUser(user)` / `@nestjs/authentication`.
 
 | | Routes | `forUser(user)` | Ambient `Gate` |
 | --- | --- | --- | --- |
-| Source | official `getUser` | the value you pass | `AuthenticationContext.user`, else nestjs-context |
+| Source | official `getUser` | the value you pass | `AuthenticationContext.user` in its scope, else nestjs-context |
 | `resolveUser` applied | no | no | only on the nestjs-context ref |
 | Needs | `@nestjs/authorization` | nothing | `@nestjs/authentication` or nestjs-context |
 

@@ -125,7 +125,7 @@ user it produced.
 | `superAdmin` applied everywhere | applied by `AuthzPolicy` subclasses, the built-in policies and the `Gate` |
 | `after` hook, `{ allowed, message }` results | removed: only a literal `true` allows |
 | current user from nestjs-context on routes | the official `getUser` (default `request.user`) |
-| `gate.allows()` user from nestjs-context | `AuthenticationContext.user` first, then nestjs-context |
+| `gate.allows()` user from nestjs-context | `AuthenticationContext.user` inside its scope (`null` there is a guest), nestjs-context outside it |
 | a persisted permission named like a policy ability grants it | the policy decides (only `superAdmin` bypasses it), in checks and in `scope()` |
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
@@ -136,7 +136,44 @@ The deprecated `@Can` / `@Policy` only write the official metadata, and are remo
 **Deny by default**: a handler with no `@Can()` is denied; add `@Can.Anyone()` (or `@Public()`
 from `@nestjs/authentication`) where anyone may call it. **Class and method requirements add
 up.** **Guests reach the policy as `null`**: type the user `User | null`; a guest denial is a 401.
+Deny by default is what the migration mode below defers.
 </Callout>
+
+## Migrating one controller at a time: `unannotated: 'allow'`
+
+The official guard denies every route that declares no `@Can()`: the app's public routes, and
+every controller another library mounts. 0.x let them through. Turning authorization on for a
+large app in one go is rarely possible, so this package has a migration mode (the official guard
+has no such option):
+
+1. **Turn the official global guard off**, and switch the migration mode on:
+
+   ```ts
+   imports: [
+     AuthenticationModule.forRoot({ ... }),                 // or your Passport guard, first
+     AuthorizationModule.forRoot({ globalGuard: false }),
+     AuthzModule.forRoot({ unannotated: 'allow' }),         // forRootAsync: next to useFactory
+   ]
+   ```
+
+   `AuthzModule` registers its own global `AuthzGuard`. A route with official `@Can()`
+   requirements (class or method, the deprecated string `@Can`, `@Roles`, `@Permission`) is handed
+   to the official `AuthorizationGuard` as is: same `getUser`, same policies, same 401 for a guest
+   and 403 for a user, same `denied` event. A route with no requirement is let through. The app
+   fails to start if the official global guard is still on, because it would keep denying them.
+
+2. **Drop the 0.x guard.** Remove `RolesGuard` / `CanGuard` from `APP_GUARD` and `@UseGuards()`:
+   the string `@Can('page.documents')` and `@Roles('admin')` keep working, enforced by `AuthzGuard`.
+
+3. **Annotate the open routes**, one controller at a time: `@Can.Anyone()` where anyone may call
+   it, `@Public()` (from `@nestjs/authentication`) where no sign-in is needed, a `@Can(...)`
+   everywhere else. Move string `@Can`s to the official form as you go.
+
+4. **Switch to deny by default** when every route declares something: remove `unannotated` (or set
+   `'deny'`) and `globalGuard: false`. The official guard is global again, and a forgotten
+   `@Can()` is a 403 instead of an open route.
+
+A route that slipped through in step 3 is open in this mode, so keep it for the migration only.
 
 ## Where to go next
 

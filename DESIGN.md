@@ -22,7 +22,7 @@ a gente larga e usa o dele; o que falta, a gente mantém e constrói em cima.**
 | `@Policy()`, `@Can()`, `Can.Anyone()`, `AuthorizationGuard`, `getUser` | `RolePolicy`, `PermissionPolicy`, `GatePolicy` (policies oficiais) |
 | `AuthorizationService.can/authorize` | `Gate` (string abilities, `allowsMany`, `scope`, `define`, `hasRole`, user ambiente) |
 | `before()` por policy | `AuthzPolicy` / `superAdminBefore` / `decisionProviderBefore` (super-admin global + PDP externo) |
-| `AuthenticationContext.user` (`@nestjs/authentication`) | user ambiente do `Gate` (lido primeiro; nestjs-context é o fallback) |
+| `AuthenticationContext.user` (`@nestjs/authentication`) | user ambiente do `Gate` (dentro do escopo dele é a resposta final; nestjs-context só fora de qualquer escopo) |
 | `args` resolver de `@Can` | `byId(Post)`, `roles()`, `permission()`, `ability()`, `staticCanArgs()` |
 | evento de negação | canal `authz:decision` com allow **e** deny |
 | — | `@PolicyFor(Post)` (link recurso → policy), `@Roles`/`@Permission` (açúcar) |
@@ -80,8 +80,32 @@ curto-circuita. Permissões continuam liberando abilities nomeadas que nenhuma p
 
 **User ambiente** (chamada sem `forUser`): `AuthenticationContext.user` do
 `@nestjs/authentication` (peer opcional, achado pelo `ModuleRef` com a classe como token; é um
-`AsyncLocalStorage`, certo no handler e em tudo que ele aguarda) → senão o ref do nestjs-context
-(hidratado por `resolveUser`, uma vez por request) → senão convidado (`null`).
+`AsyncLocalStorage`, certo no handler e em tudo que ele aguarda). Com o escopo dele ativo
+(`scope.current` presente: chamada que o interceptor dele abriu, ou `AuthenticationContext.run()`)
+a resposta é final, e `null` é convidado. Só sem escopo nenhum (worker, cron, guard antes do
+interceptor) → o ref do nestjs-context (hidratado por `resolveUser`, uma vez por request) → senão
+convidado (`null`). O pacote não exporta o `AuthenticationScope`; lemos o campo (privado no TS)
+`scope` do `AuthenticationContext`. Versão que o esconda cai no comportamento antigo (user é
+resposta, `null` não).
+
+**Modo de migração (`unannotated: 'allow'`).** O guard oficial é deny-by-default e não tem opção
+para isso; um app grande (rotas públicas, controllers de outras libs) não liga tudo de uma vez.
+Com `AuthzModule.forRoot({ unannotated: 'allow' })` registramos um `APP_GUARD` próprio
+(`AuthzGuard`) que **delega** ao `AuthorizationGuard` oficial (injetado; o módulo oficial o
+exporta) quando a rota tem requisitos (`routeRequirements`: classe + método, `Can.Anyone()` /
+`@Public()` no método tiram os da classe) e deixa passar quando não tem. Delegar em vez de
+reimplementar: mesmo `getUser`, avaliador, 401/403 e evento `denied`, sem copiar nada. Exige
+`AuthorizationModule.forRoot({ globalGuard: false })`; com os dois globais o oficial continua
+negando, então **o boot falha** (um aviso passaria despercebido e a opção não faria nada). A
+detecção procura um `APP_GUARD` cuja instância tenha a marca oficial
+`Symbol.for('@nestjs/authorization:guard')`. A opção é estática (decide providers): no
+`forRootAsync` fica ao lado do `useFactory`, e uma factory que a devolva falha o boot. Default
+`'deny'`: não registra nada.
+
+**Controllers que o módulo monta** (hoje só `POST /authz/can`): cada registro cria a sua classe,
+marcada `authorization:can-anyone` (responde convidados com `false`), e recebe as
+`decorators?: ClassDecorator[]` (convenção do `@nestjs/mcp`), aplicadas depois das nossas, sem
+vazar entre registros.
 
 **Resolver de argumento sem DI.** Os resolvers do `@Can` oficial só recebem o
 `ExecutionContext`. O `AuthzModule` registra no boot uma referência de módulo (resolver de
@@ -141,12 +165,13 @@ imports: [
 ]
 ```
 `resolveUser` só vale para o user **ambiente** do `Gate` (chamada sem `forUser`, via
-nestjs-context, quando o `AuthenticationContext` não tem user). Rotas nunca usam: o user vem do
+nestjs-context, quando não há escopo do `@nestjs/authentication`). Rotas nunca usam: o user vem do
 `getUser` oficial.
 
 ## 7.1 Compromissos forçados pela API oficial
 
 - **Deny-by-default.** O guard oficial nega rota sem declaração. Antes, rota sem `@Can` passava.
+  `unannotated: 'allow'` (§4) adia isso durante a migração.
 - **`@Roles` em classe soma (AND)** com o do método; antes o do método sobrescrevia.
 - **Só `true` literal libera.** `{ allowed, message }` (`PolicyResponse`) e o hook `after` foram
   removidos: o avaliador oficial não tem "sem opinião" nem mensagem; a resposta nunca nomeia a
@@ -157,8 +182,9 @@ nestjs-context, quando o `AuthenticationContext` não tem user). Rotas nunca usa
   `superAdminBefore`) o consultam.
 - **Resolver de args sem DI** → referência de módulo registrada no boot (§4).
 - **Constantes de metadata não exportadas** → lidas/escritas por string
-  (`'authorization:can'`, `'authorization:policy'`, `'authorization:can-anyone'`), com teste de
-  contrato (`official-contract.spec.ts`).
+  (`'authorization:can'`, `'authorization:policy'`, `'authorization:can-anyone'`) e o símbolo
+  `Symbol.for('@nestjs/authentication:public')` do `@Public()`, com teste de contrato
+  (`official-contract.spec.ts`).
 - **Registro oficial não exportado** → `PolicyIndex` acha policies pelo `DiscoveryService` com o
   mesmo critério (token ou metatype marcado).
 - **O `@Can` string depreciado** escreve um requisito cujo `policy` é um getter preguiçoso

@@ -13,7 +13,8 @@ export type User = unknown;
 
 /**
  * A verdict with an optional reason. What a {@link DecisionProvider} may answer instead of
- * a bare boolean; the `message` is published on the decision event.
+ * a bare boolean. Only `allowed` is used: `@nestjs/authorization` has no deny-with-reason, so a
+ * route denial is the official 403 and the `message` is dropped (README, "Migrating from 0.8").
  */
 export interface PolicyResponse {
   allowed: boolean;

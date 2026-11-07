@@ -189,6 +189,7 @@ decorators are gone: move each one to its official form.
 | `gate.allows()` user from nestjs-context | `AuthenticationContext.user` inside its scope (`null` there is a guest), nestjs-context outside it |
 | a persisted permission named like a policy ability grants it | the policy decides (only `superAdmin` bypasses it), in checks and in `scope()` |
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
+| a `DecisionProvider` deny `message` (`{ allowed: false, message }`) is the 403's message | dropped: the 403 is the official `{ statusCode: 403, message: 'Forbidden' }`. `@nestjs/authorization` has no deny-with-reason (a policy returns `true` or denies; an exception it throws counts as a failure, not a denial). To show a reason, throw your own `ForbiddenException(reason)` from the ability. A route then gets your body, but no `denied` event is emitted and `AuthorizationService.can()` throws instead of returning `false`. |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
 | `import … from '@dudousxd/nestjs-authz-inertia/client'` | `import … from '@dudousxd/nestjs-authz-client'` (the subpath is removed) |
 

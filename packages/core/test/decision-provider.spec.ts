@@ -227,6 +227,25 @@ describe('DecisionProvider on routes (official @Can)', () => {
     expect(decide).toHaveBeenCalledWith({ id: 7 }, 'update', expect.any(Post));
   });
 
+  it('a deny `message` does not reach the 403: the official guard answers with its own body', async () => {
+    // @nestjs/authorization 0.1.3 has no deny-with-reason: a policy returns `true` or denies, and
+    // the guard throws `ForbiddenException(undefined)`. The provider's message is dropped (README:
+    // "Migrating from 0.8"). If a future official version carries a reason, this test fails.
+    const decide = vi.fn(() => ({ allowed: false, message: 'Your role does not allow this.' }));
+    const { app } = await bootApp({
+      controllers: [PostController],
+      providers: [PostPolicy, { provide: DECISION_PROVIDER, useValue: { decide } }],
+    });
+    close = () => app.close();
+    const res = await request(app.getHttpServer())
+      .patch('/posts/1')
+      .set(asUser({ id: 1 }))
+      .expect(403);
+    expect(decide).toHaveBeenCalled();
+    expect(res.body).toEqual({ statusCode: 403, message: 'Forbidden' });
+    expect(JSON.stringify(res.body)).not.toContain('Your role does not allow this.');
+  });
+
   it('is not asked for RolePolicy / PermissionPolicy abilities', async () => {
     const decide = vi.fn(() => true);
     const { app } = await bootApp({

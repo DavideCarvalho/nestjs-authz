@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
@@ -13,7 +14,7 @@ import {
 import type { DataSource } from 'typeorm';
 import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
-import { Placeholders, assertSafeIdentifier } from './sql.js';
+import { Placeholders } from './sql.js';
 import type { AuthzStoreOptions, RoleAssignmentScope, TenantScope } from './types.js';
 
 // Re-exported so `@dudousxd/nestjs-authz-typeorm`'s public `UserAuthz` keeps the

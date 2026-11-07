@@ -33,8 +33,8 @@ export { POLICY_RESOURCE_METADATA } from './links.js';
  *
  * `Symbol.for(key)` uses the global symbol registry so an RBAC package registering
  * this same key resolves to the SAME symbol instance without importing core internals.
- * The token is consulted with `@Optional()` — when absent, the Gate behaves exactly
- * as before (backward-compatible: unknown abilities still throw).
+ * The token is consulted with `@Optional()` — when absent, an unknown string ability
+ * still throws.
  */
 export const PERMISSION_PROVIDER = capability('authz', 'permission-provider');
 

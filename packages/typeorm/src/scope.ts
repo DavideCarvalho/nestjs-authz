@@ -4,9 +4,9 @@ import type {
   ScopeNode,
   ScopeOperator,
 } from '@dudousxd/nestjs-authz';
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import type { Type } from '@nestjs/common';
 import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
-import { assertSafeIdentifier } from './sql.js';
 
 /**
  * The minimal scope-resolving surface shared by `Gate` and `BoundGate`. Accepting

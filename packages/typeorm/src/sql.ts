@@ -1,9 +1,5 @@
 import type { DataSource } from 'typeorm';
 
-// Re-exported so the package's existing `./sql.js` import sites (and tests) keep working while the
-// guard itself is single-sourced in core.
-export { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
-
 /**
  * Database types whose driver binds parameters with positional `$1, $2, …`
  * placeholders instead of `?`. Postgres (and its aurora/cockroach kin) reject the

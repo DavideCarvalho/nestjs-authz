@@ -1,5 +1,5 @@
 ---
-"@dudousxd/nestjs-authz-testing": major
+"@dudousxd/nestjs-authz-testing": minor
 ---
 
 `buildGate` / `buildBoundGate` are async and compile a Nest testing module with the official

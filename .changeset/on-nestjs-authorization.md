@@ -1,5 +1,5 @@
 ---
-"@dudousxd/nestjs-authz": major
+"@dudousxd/nestjs-authz": minor
 ---
 
 Build on NestJS's first-party `@nestjs/authorization` instead of a parallel engine. Requires
@@ -48,12 +48,14 @@ args?)`, `Can.Anyone()`), the global deny-by-default `AuthorizationGuard`, the c
   mounts (the `POST /authz/can` endpoint), which are open to the official guard by default
   (`authorization:can-anyone`). `canEndpoint` and `decorators` are static options.
 
-**Deprecated** (removed in 2.0; they only write official metadata): the string
-`@Can('update', Post)` → `@Can(PostPolicy, 'update', byId(Post))`; `{ classLevel: true }` →
-no args; `@Can('access-admin')` → `@Can(GatePolicy, 'allows', ability('access-admin'))`;
-`@Policy(Post)` → official `@Policy()` + `@PolicyFor(Post)`.
+**Removed, with no compatibility shim** (move each to the official form): this package's
+`Can` and `Policy` exports and `CanOptions`. The string `@Can('update', Post)` →
+`@Can(PostPolicy, 'update', byId(Post))` (`Can` from `@nestjs/authorization`);
+`@Can('create', Post, { classLevel: true })` → `@Can(PostPolicy, 'create')`;
+`@Can('access-admin')` → `@Can(GatePolicy, 'allows', ability('access-admin'))`;
+`@Policy(Post)` → official `@Policy()` + `@PolicyFor(Post)` (or `@PolicyFor(Post)` alone).
 
-**Removed:** `CanGuard`, `RolesGuard`, `PolicyRegistry` (use `PolicyIndex`), `CAN_METADATA`,
+**Also removed:** `CanGuard`, `RolesGuard`, `PolicyRegistry` (use `PolicyIndex`), `CAN_METADATA`,
 `ROLES_METADATA`, the `policies` and `after` options, deny messages on policy results
 (`PolicyResponse` / `PolicyResult` remain only as `DecisionProvider` verdicts),
 `PolicyNotDecoratedException`, `ResourceResolverMissingException`, `AfterHook`,

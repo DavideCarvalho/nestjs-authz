@@ -1,11 +1,11 @@
 ---
-"@dudousxd/nestjs-authz-typeorm": major
-"@dudousxd/nestjs-authz-mikro-orm": major
-"@dudousxd/nestjs-authz-prisma": major
-"@dudousxd/nestjs-authz-drizzle": major
+"@dudousxd/nestjs-authz-typeorm": minor
+"@dudousxd/nestjs-authz-mikro-orm": minor
+"@dudousxd/nestjs-authz-prisma": minor
+"@dudousxd/nestjs-authz-drizzle": minor
 ---
 
-Run on `@dudousxd/nestjs-authz` 1.x and `@nestjs/authorization`: persisted roles and
+Run on `@dudousxd/nestjs-authz` 0.9 and `@nestjs/authorization`: persisted roles and
 permissions now guard routes through the official guard as the core's `RolePolicy` /
 `PermissionPolicy` (`@Roles('editor')`, `@Permission('posts.publish')`), and the guard and the
 handler's `Gate` calls share one permission and role fetch per request. The store API

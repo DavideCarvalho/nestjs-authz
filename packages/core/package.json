@@ -50,7 +50,8 @@
     "@dudousxd/nestjs-diagnostics": "0.7.1"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "prepack": "node ../../scripts/check-package-exports.mjs",
+    "build": "tsc -p tsconfig.json --incremental false",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"

@@ -274,6 +274,16 @@ providers: [{
 The adapter fails **closed** by default. An unreachable PDP denies, and an unsupported query plan
 scopes to no rows. Set `onFailure: 'abstain'` to fall back to your own policies instead.
 
+## Build output check
+
+`tsc` builds run with `--incremental false`. The `.tsbuildinfo` file sits outside `dist/` (and outside
+turbo's cached `outputs`), so after `dist/` is removed or restored an incremental build can decide the
+outputs are current and emit only some files (seen as a missing `dist/index.js`).
+
+`pnpm check:exports` (also each package's `prepack`, and a CI step after the build) fails if a path in a
+package's `exports`, `main`, `module`, `types` or `bin` does not exist. `release` runs it before
+`changeset publish`. Run it after any build you are about to pack.
+
 ## License
 
 MIT © Davi Carvalho

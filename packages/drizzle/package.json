@@ -35,7 +35,8 @@
   },
   "files": ["dist/", "README.md", "CHANGELOG.md"],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "prepack": "node ../../scripts/check-package-exports.mjs",
+    "build": "tsc -p tsconfig.json --incremental false",
     "test": "vitest run --passWithNoTests",
     "test:db:pg": "AUTHZ_TEST_DIALECT=postgres vitest run --config vitest.db.config.ts",
     "test:watch": "vitest",

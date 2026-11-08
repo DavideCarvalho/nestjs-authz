@@ -26,11 +26,25 @@ const policyByResource = new Map<Type<unknown>, Type<unknown>>();
  * ```
  *
  * `@PolicyFor(Post)` alone also works: it applies the official `@Policy()` itself.
+ *
+ * Links are process-wide. Linking a resource that is already linked to another policy
+ * throws; linking the same pair again is a no-op, and a re-declared class of the same
+ * name (a test helper declaring its policy per call, a hot reload) replaces the link.
  */
 export function PolicyFor(resource: Type<unknown>): ClassDecorator {
   return (target) => {
+    const policy = target as unknown as Type<unknown>;
+    const linked = policyByResource.get(resource);
+    // A class of the same name re-declared (a test helper that declares its policy per
+    // call, a hot reload) replaces the link; another policy is a conflict.
+    if (linked && linked !== policy && linked.name !== policy.name) {
+      throw new Error(
+        `@PolicyFor(${resource.name}) on ${policy.name}: ${resource.name} is already linked to ${linked.name}. ` +
+          'A resource has one policy; the link is process-wide, so two policies for it would silently replace each other.',
+      );
+    }
     Reflect.defineMetadata(POLICY_RESOURCE_METADATA, resource, target);
-    policyByResource.set(resource, target as unknown as Type<unknown>);
+    policyByResource.set(resource, policy);
     (OfficialPolicy() as (t: unknown) => void)(target);
   };
 }

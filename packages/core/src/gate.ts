@@ -5,6 +5,7 @@ import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
 import { isOfficialPolicy } from './official.js';
 import { PermissionCache } from './permission-cache.js';
+import { withAskedCheck } from './policies/authz-policy.js';
 import { PolicyIndex } from './policy-index.js';
 import { AuthzRbac } from './rbac.js';
 import {
@@ -381,7 +382,11 @@ export class Gate {
     const policy = this.policyFor(ability, resource);
     if (policy) {
       const args = resource !== undefined && typeof resource !== 'function' ? [resource] : [];
-      return this.decidePolicy(user, policy, ability, args, authorizing);
+      // superAdmin and the decision point were asked above: an `AuthzPolicy` `before()`
+      // must not ask them again for this same check.
+      return withAskedCheck(user, ability, args, () =>
+        this.decidePolicy(user, policy, ability, args, authorizing),
+      );
     }
 
     if (await this.rbac.grants(user, ability, resource, cache)) {

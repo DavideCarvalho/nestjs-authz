@@ -145,8 +145,31 @@ describe('DecisionProvider seam', () => {
     ]);
     expect(results.map((r) => r.allowed)).toEqual([true, true, false]);
     expect(decideMany).toHaveBeenCalledOnce();
-    // The abstained item reaches the policy, whose AuthzPolicy before() asks `decide` itself.
-    expect(decide).toHaveBeenCalledTimes(1);
+    // The abstained item reaches the policy; its AuthzPolicy before() does not ask again.
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('a string check on a linked AuthzPolicy asks superAdmin and decide once each', async () => {
+    const decide = vi.fn().mockReturnValue(undefined);
+    const superAdmin = vi.fn().mockReturnValue(undefined);
+    const g = await gate({ decide }, { superAdmin });
+    const post = new Post(1);
+    expect(await g.forUser({ id: 1 }).allows('update', post)).toBe(true);
+    expect(superAdmin).toHaveBeenCalledOnce();
+    expect(decide).toHaveBeenCalledOnce();
+    expect(decide).toHaveBeenCalledWith({ id: 1 }, 'update', post);
+
+    await g
+      .forUser({ id: 2 })
+      .authorize('update', post)
+      .catch(() => undefined);
+    expect(superAdmin).toHaveBeenCalledTimes(2);
+    expect(decide).toHaveBeenCalledTimes(2);
+
+    // Naming the policy still goes through its own before(): asked once there.
+    await g.forUser({ id: 1 }).allows(PostPolicy, 'update', post);
+    expect(superAdmin).toHaveBeenCalledTimes(3);
+    expect(decide).toHaveBeenCalledTimes(3);
   });
 
   it('allowsMany falls back to per-item decide when decideMany throws', async () => {

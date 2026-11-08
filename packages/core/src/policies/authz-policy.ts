@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeVerdict } from '../decision-provider.js';
 import { authzRuntime } from '../runtime.js';
 
@@ -7,6 +8,40 @@ function resourceOf(args: readonly unknown[]): object | undefined {
   return (typeof first === 'object' && first !== null) || typeof first === 'function'
     ? (first as object)
     : undefined;
+}
+
+/** A check whose `superAdmin` and decision-point answers the `Gate` already has. */
+interface AskedCheck {
+  user: unknown;
+  ability: string;
+  resource: object | undefined;
+}
+
+const asked = new AsyncLocalStorage<AskedCheck>();
+
+/**
+ * @internal Runs `fn` (the `Gate` handing a string check to the official service) knowing
+ * `superAdmin` did not grant `ability` and the decision point abstained, so the policy's
+ * {@link superAdminBefore} / {@link decisionProviderBefore} skip asking them again.
+ */
+export function withAskedCheck<T>(
+  user: unknown,
+  ability: string,
+  args: readonly unknown[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  return asked.run({ user: user ?? null, ability, resource: resourceOf(args) }, fn);
+}
+
+/** True when the `Gate` already asked about exactly this check (see {@link withAskedCheck}). */
+function alreadyAsked(user: unknown, ability: string, resource: object | undefined): boolean {
+  const check = asked.getStore();
+  return (
+    check !== undefined &&
+    check.user === (user ?? null) &&
+    check.ability === ability &&
+    check.resource === resource
+  );
 }
 
 /**
@@ -20,7 +55,7 @@ export async function superAdminBefore(
   resource?: object,
 ): Promise<true | undefined> {
   const hook = authzRuntime().superAdmin;
-  if (!hook) return undefined;
+  if (!hook || alreadyAsked(user, ability, resource)) return undefined;
   return (await hook(user ?? null, ability, resource)) === true ? true : undefined;
 }
 
@@ -36,7 +71,7 @@ export async function decisionProviderBefore(
   resource?: object,
 ): Promise<boolean | undefined> {
   const provider = authzRuntime().decisionProvider();
-  if (!provider) return undefined;
+  if (!provider || alreadyAsked(user, ability, resource)) return undefined;
   return normalizeVerdict(await provider.decide(user ?? null, ability, resource)).allowed;
 }
 

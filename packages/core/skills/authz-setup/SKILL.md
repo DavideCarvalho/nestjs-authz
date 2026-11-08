@@ -50,7 +50,7 @@ export class AppModule {}
 
 `forRootAsync({ imports, inject, useFactory | useClass | useExisting, canEndpoint, decorators, unannotated })` takes the
 same options. `canEndpoint`, `decorators` and `unannotated` are static (read from the top
-level next to `useFactory`, never from the factory's return — the module throws).
+level next to `useFactory`, never from the factory's return — `decorators` and `unannotated` in the factory's return throw).
 
 ## Core patterns
 

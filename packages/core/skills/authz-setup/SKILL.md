@@ -48,8 +48,9 @@ import { AuthzModule } from '@dudousxd/nestjs-authz';
 export class AppModule {}
 ```
 
-`forRootAsync({ imports, inject, useFactory | useClass | useExisting, canEndpoint })` takes the
-same options. `canEndpoint` is static (controllers register before the factory runs).
+`forRootAsync({ imports, inject, useFactory | useClass | useExisting, canEndpoint, decorators, unannotated })` takes the
+same options. `canEndpoint`, `decorators` and `unannotated` are static (read from the top
+level next to `useFactory`, never from the factory's return — the module throws).
 
 ## Core patterns
 

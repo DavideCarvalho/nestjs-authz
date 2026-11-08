@@ -34,8 +34,9 @@ provider returning `false`/nullish never DENIES — it falls through to normal r
 ## Setup
 
 The simplest path is an ORM adapter's `AuthzRbacModule`, which builds a store and
-registers both seams. Example with the Prisma adapter (the TypeORM and MikroORM siblings
-have an identical `AuthzRbacModule` surface):
+registers both seams. Example with the Prisma adapter (which takes `store` or `client`;
+MikroORM takes `store`; the TypeORM and Drizzle siblings also accept `connectionName` /
+`storeOptions` to build the store from the official connection instead of a prebuilt `store`):
 
 ```ts
 import { Module } from '@nestjs/common';

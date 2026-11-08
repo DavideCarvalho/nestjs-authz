@@ -1,5 +1,5 @@
 import { Injectable, type Type } from '@nestjs/common';
-import { DiscoveryService, ModuleRef } from '@nestjs/core';
+import { DiscoveryService, ModuleRef, ModulesContainer } from '@nestjs/core';
 import { getPolicyResource, policyForResource, policyLinks } from './links.js';
 import { isOfficialPolicy } from './official.js';
 
@@ -22,18 +22,25 @@ export interface IndexedPolicy {
  */
 @Injectable()
 export class PolicyIndex {
-  private cache: IndexedPolicy[] | undefined;
+  /** The last scan, reused while the container's shape (modules, providers) is unchanged. */
+  private cache: { signature: string; policies: IndexedPolicy[] } | undefined;
 
   constructor(
     private readonly discovery: DiscoveryService,
     private readonly moduleRef: ModuleRef,
+    private readonly modules: ModulesContainer,
   ) {}
 
-  /** Every official policy registered as a provider, built-ins included. */
+  /**
+   * Every official policy registered as a provider, built-ins included. Rescanned when a
+   * module or provider is added (a lazy module) or a policy was not instantiated yet.
+   */
   all(): IndexedPolicy[] {
-    if (this.cache) return this.cache;
+    const signature = this.signature();
+    if (this.cache?.signature === signature) return this.cache.policies;
     const seen = new Set<unknown>();
     const out: IndexedPolicy[] = [];
+    let complete = true;
     for (const wrapper of this.discovery.getProviders()) {
       const token = wrapper.token;
       const key = isOfficialPolicy(token)
@@ -41,7 +48,9 @@ export class PolicyIndex {
         : !wrapper.isFactory && isOfficialPolicy(wrapper.metatype)
           ? (wrapper.metatype as Type<unknown>)
           : undefined;
-      if (!key || seen.has(key) || !wrapper.instance || typeof wrapper.instance !== 'object') {
+      if (!key || seen.has(key)) continue;
+      if (!wrapper.instance || typeof wrapper.instance !== 'object') {
+        complete = false;
         continue;
       }
       seen.add(key);
@@ -51,7 +60,14 @@ export class PolicyIndex {
         resource: getPolicyResource(key),
       });
     }
-    if (out.length > 0) this.cache = out;
+    this.cache = complete ? { signature, policies: out } : undefined;
+    return out;
+  }
+
+  /** Cheap fingerprint of the container: module count and each module's provider count. */
+  private signature(): string {
+    let out = String(this.modules.size);
+    for (const module of this.modules.values()) out += `,${module.providers.size}`;
     return out;
   }
 

@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz-codegen
 
+## 0.3.1
+
+### Patch Changes
+
+- [#70](https://github.com/DavideCarvalho/nestjs-authz/pull/70) [`416f0bd`](https://github.com/DavideCarvalho/nestjs-authz/commit/416f0bd7d9340f6f3314017d4925cb89834c4342) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - README fixes: the codegen README no longer describes the removed `PostPolicy` → `Post` name guess and lists `@PolicyFor` among the names that must not be aliased; the core README covers the dropped `DecisionProvider` deny message and the expected boot error under `unannotated: 'allow'`.
+
 ## 0.3.0
 
 ### Minor Changes

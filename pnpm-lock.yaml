@@ -106,8 +106,8 @@ importers:
   packages/core:
     dependencies:
       '@dudousxd/nestjs-diagnostics':
-        specifier: 0.7.1
-        version: 0.7.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
+        specifier: '>=0.7.0 <1.0.0'
+        version: 0.8.0(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
     devDependencies:
       '@cerbos/http':
         specifier: 0.29.0
@@ -232,7 +232,7 @@ importers:
         version: link:../core
       '@dudousxd/nestjs-inertia':
         specifier: 1.8.2
-        version: 1.8.2(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@types/express@4.17.25)(express@4.22.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+        version: 1.8.2(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@types/express@4.17.25)(express@5.2.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/authorization':
         specifier: 0.1.3
         version: 0.1.3(@nestjs/authentication@0.1.5(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -683,8 +683,8 @@ packages:
     resolution: {integrity: sha512-G2hb0xgngxI6PXkxg8+weXJ7ZZDRsIx1ShYS86CGtG5af/o1u+u8A5AT8IR2QBgFXRs2j6UQgU9bD/CWPXe6CA==}
     engines: {node: '>=20'}
 
-  '@dudousxd/nestjs-diagnostics@0.7.1':
-    resolution: {integrity: sha512-Ve1jrKw64McKf7kGHTV9tVmfhQoo1hLEmjdJ9h4ghJsBSfO3Mt8sjzcvRcJ0zC4FcBzsF5kUbD0CLy3E3MnCcQ==}
+  '@dudousxd/nestjs-diagnostics@0.8.0':
+    resolution: {integrity: sha512-3frnGK2zyLHGc32OSu2iJu36a3L8ZMBFSwMKJyMz7AToUTfeBmU/NF135GzHdu1bMCzL5f4b7rmzvj7FmNfIZg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@nestjs/common': ^10 || ^11 || ^12
@@ -4361,13 +4361,13 @@ snapshots:
 
   '@dudousxd/nestjs-diagnostics@0.2.3': {}
 
-  '@dudousxd/nestjs-diagnostics@0.7.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)':
+  '@dudousxd/nestjs-diagnostics@0.8.0(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)':
     optionalDependencies:
       '@nestjs/common': 12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
 
-  '@dudousxd/nestjs-inertia@1.8.2(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@types/express@4.17.25)(express@4.22.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
+  '@dudousxd/nestjs-inertia@1.8.2(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.1(@nestjs/common@12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@types/express@4.17.25)(express@5.2.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
     dependencies:
       '@dudousxd/nestjs-diagnostics': 0.2.3
       '@nestjs/common': 12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -4376,7 +4376,7 @@ snapshots:
       rxjs: 7.8.2
     optionalDependencies:
       '@types/express': 4.17.25
-      express: 4.22.2
+      express: 5.2.1
 
   '@electric-sql/pglite@0.4.6': {}
 

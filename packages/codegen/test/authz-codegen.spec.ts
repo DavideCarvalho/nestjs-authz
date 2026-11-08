@@ -29,8 +29,14 @@ function ctxWith(project: Project) {
 const CONTROLLER = `
 import { Controller, Post as HttpPost, Patch } from '@nestjs/common';
 import { Can } from '@nestjs/authorization';
-import { GatePolicy, ability, byId } from '@dudousxd/nestjs-authz';
+import { GatePolicy, PolicyFor, ability, byId } from '@dudousxd/nestjs-authz';
 class Post {}
+
+@PolicyFor(Post)
+export class PostPolicy {
+  update(user, post) { return true; }
+  create(user) { return true; }
+}
 
 @Controller('posts')
 export class PostsController {
@@ -156,6 +162,34 @@ describe('nestjsAuthzCodegen', () => {
     expect(ext.apiHeader?.(ctx)).toBeUndefined();
   });
 
+  it('emits the abilities of an unlinked @Policy() class as model-less', () => {
+    const ext = nestjsAuthzCodegen();
+    const project = projectWith(
+      `
+      import { Policy } from '@nestjs/authorization';
+      @Policy()
+      export class InvoicePolicy {
+        send(user) { return true; }
+      }
+      @Controller('invoices')
+      export class InvoicesController {
+        @Get() @Can(InvoicePolicy, 'send') send() {}
+      }
+      `,
+      '/src/invoices.ts',
+    );
+    const ctx = ctxWith(project);
+    const routes = ext.transformRoutes?.(
+      [route('InvoicesController', 'send', '/src/invoices.ts')],
+      ctx,
+    ) as Array<never>;
+    const out = ext.apiHeader?.(ctx)?.statements?.join('\n') ?? '';
+    expect(out).toContain('export type AuthzAbility = "send";');
+    // No guessed "Invoice" key: the Gate resolves a resource only through @PolicyFor.
+    expect(out).toContain('export const authzAbilities = {} as const;');
+    expect(ext.apiMembers?.({ route: routes[0] } as never, ctx)?.can).toBe('() => can("send")');
+  });
+
   it('discovers @PolicyFor method names as class-level abilities when enabled', () => {
     const ext = nestjsAuthzCodegen();
     const project = projectWith(
@@ -226,7 +260,9 @@ export class PostsController {
     );
     expect(out).toContain('"Post": ["update"]');
     expect(out).toContain('"Comment": ["edit"]');
-    expect(out).toContain('"Report": ["export"]');
+    // ReportPolicy has no @PolicyFor link: the runtime resolves its abilities by name only.
+    expect(out).not.toContain('"Report"');
+    expect(routes[2]?.contract?.contractSource?.authz).toEqual({ ability: 'export' });
     expect(out).not.toContain('"before"');
     expect(out).not.toContain('"scope"');
     expect(routes[6]?.contract?.contractSource?.authz).toBeUndefined();

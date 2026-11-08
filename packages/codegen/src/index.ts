@@ -61,7 +61,9 @@ function callOf(node: Node | undefined): { name: string; args: Node[] } | undefi
 }
 
 /**
- * The resource a policy class is linked to: `@PolicyFor(Post)`, else the class name without `Policy` (`PostPolicy` → `Post`).
+ * The resource a policy class is linked to with `@PolicyFor(Post)`, if any. No guess from the
+ * class name: the runtime `Gate` (and so the `can()` endpoint) resolves a string ability on a
+ * resource only through that link, so an unlinked policy's abilities are model-less.
  */
 function resourceOfPolicy(policyName: string, project: Project): string | undefined {
   for (const sourceFile of project.getSourceFiles()) {
@@ -70,16 +72,14 @@ function resourceOfPolicy(policyName: string, project: Project): string | undefi
     const linked = resourceNameFromPolicy(classDecl);
     if (linked) return linked;
   }
-  return policyName.endsWith('Policy')
-    ? policyName.slice(0, -'Policy'.length) || undefined
-    : undefined;
+  return undefined;
 }
 
 /**
  * Read the client abilities one `@Can(...)` (or sugar) decorator declares:
  *
  * - official `@Can(PostPolicy, 'update', byId(Post))` → `update` on `Post` (from `byId`, else
- *   the policy's `@PolicyFor` link, else its name)
+ *   the policy's `@PolicyFor` link, else model-less)
  * - `@Can(PermissionPolicy, 'has', permission('posts.publish'))` / `@Permission('posts.publish')`
  *   → the named permissions, model-less
  * - `@Can(GatePolicy, 'allows', ability('access-admin'))` → `access-admin`
@@ -149,15 +149,15 @@ const NOT_ABILITIES = new Set(['before', 'scope', 'constructor']);
 
 /**
  * Discover the abilities of every policy class (`@Policy()`, `@PolicyFor(X)`): each public
- * instance method but `before` and `scope`, keyed to the policy's resource.
+ * instance method but `before` and `scope`, keyed to the policy's `@PolicyFor` resource
+ * (model-less without one).
  */
 function discoverPolicyAbilities(project: Project): AuthzAbilityInfo[] {
   const found: AuthzAbilityInfo[] = [];
   for (const sourceFile of project.getSourceFiles()) {
     for (const classDecl of sourceFile.getClasses()) {
       if (!classDecl.getDecorators().some((d) => POLICY_DECORATORS.has(d.getName()))) continue;
-      const resource =
-        resourceNameFromPolicy(classDecl) ?? resourceOfPolicy(classDecl.getName() ?? '', project);
+      const resource = resourceNameFromPolicy(classDecl);
       for (const method of classDecl.getMethods()) {
         if (method.isStatic() || method.hasModifier(SyntaxKind.PrivateKeyword)) continue;
         const name = method.getName();

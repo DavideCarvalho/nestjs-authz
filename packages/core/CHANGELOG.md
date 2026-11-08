@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.9.1
+
+### Patch Changes
+
+- [#68](https://github.com/DavideCarvalho/nestjs-authz/pull/68) [`febcbc8`](https://github.com/DavideCarvalho/nestjs-authz/commit/febcbc8d2ac290d0f155ea505d2668ef28a4ce17) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Depend on `@dudousxd/nestjs-diagnostics` `>=0.7.0 <1.0.0` instead of the exact `0.7.1`, so an app on diagnostics 0.8.0 shares one copy (and one channel and capability registry) instead of installing a second one.
+
 ## 0.9.0
 
 ### Minor Changes

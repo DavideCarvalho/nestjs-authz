@@ -3,7 +3,7 @@ import { Inject, Injectable, Optional, type Type } from '@nestjs/common';
 import { type DecisionVerdict, normalizeVerdict } from './decision-provider.js';
 import { type AuthzDecisionReason, publishAuthzDecision } from './diagnostics.js';
 import { AbilityNotResolvedException, AmbiguousAbilityException } from './errors/exceptions.js';
-import { isOfficialPolicy } from './official.js';
+import { isOfficialPolicy, requireOfficial } from './official.js';
 import { PermissionCache } from './permission-cache.js';
 import { withAskedCheck } from './policies/authz-policy.js';
 import { PolicyIndex } from './policy-index.js';
@@ -84,13 +84,15 @@ const isPolicyCheck = (item: BatchItem): item is BatchPolicyCheck =>
 export class Gate {
   private readonly gates = new Map<string, GateFn>();
   private readonly superAdmin: SuperAdminHook | undefined;
+  private readonly authz: AuthorizationService;
 
   constructor(
-    private readonly authz: AuthorizationService,
+    @Optional() @Inject(AuthorizationService) authz: AuthorizationService | undefined,
     private readonly index: PolicyIndex,
     private readonly rbac: AuthzRbac,
     @Optional() @Inject(AUTHZ_MODULE_OPTIONS) options?: AuthzModuleOptions,
   ) {
+    this.authz = requireOfficial(authz, 'AuthorizationService', 'Gate');
     this.superAdmin = options?.superAdmin;
   }
 

@@ -7,11 +7,12 @@ import {
   Logger,
   type OnApplicationBootstrap,
   type OnModuleInit,
+  Optional,
   type Type,
 } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants.js';
 import { DiscoveryService, MetadataScanner } from '@nestjs/core';
-import { routeRequirements } from './official.js';
+import { requireOfficial, routeRequirements } from './official.js';
 
 /** The static brand `@nestjs/authorization` puts on `AuthorizationGuard` (and its subclasses). */
 const OFFICIAL_GUARD_BRAND = Symbol.for('@nestjs/authorization:guard');
@@ -37,7 +38,11 @@ const OFFICIAL_GUARD_BRAND = Symbol.for('@nestjs/authorization:guard');
  */
 @Injectable()
 export class AuthzGuard implements CanActivate {
-  constructor(@Inject(AuthorizationGuard) private readonly official: AuthorizationGuard) {}
+  private readonly official: AuthorizationGuard;
+
+  constructor(@Optional() @Inject(AuthorizationGuard) official?: AuthorizationGuard) {
+    this.official = requireOfficial(official, 'AuthorizationGuard', 'AuthzGuard');
+  }
 
   canActivate(context: ExecutionContext): Promise<boolean> | boolean {
     if (routeRequirements(context.getClass(), context.getHandler()).length === 0) return true;

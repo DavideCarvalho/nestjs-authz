@@ -392,3 +392,27 @@ describe("unannotated: 'deny' (the default)", () => {
     expect(app.get(AuthorizationGuard)).toBeInstanceOf(AuthorizationGuard);
   });
 });
+
+describe('without AuthorizationModule', () => {
+  it.each([
+    ['deny', {}],
+    ['allow', { unannotated: 'allow' as const }],
+  ])('fails the boot with a message naming the missing import (%s)', async (_mode, options) => {
+    const error = await Test.createTestingModule({ imports: [AuthzModule.forRoot(options)] })
+      .compile()
+      .then((mod) => mod.init())
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect((error as Error).message).toMatch(
+      /needs (AuthorizationService|AuthorizationGuard) from @nestjs\/authorization.*Import AuthorizationModule\.forRoot\(\)/,
+    );
+  });
+
+  it('AuthzGuard names AuthorizationGuard when only the guard is missing', () => {
+    expect(() => new AuthzGuard(undefined)).toThrow(
+      /AuthzGuard needs AuthorizationGuard from @nestjs\/authorization/,
+    );
+  });
+});

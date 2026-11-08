@@ -47,3 +47,16 @@ export function routeRequirements(type: Type<unknown>, handler: object): Officia
     Reflect.getMetadata(OFFICIAL_CAN_ANYONE_METADATA, handler) === true;
   return [...(methodOpen ? [] : readCanRequirements(type)), ...readCanRequirements(handler)];
 }
+
+/**
+ * `dependency`, or a clear error when `@nestjs/authorization`'s `AuthorizationModule` is not
+ * imported: without it Nest only reports an unresolvable constructor argument of `consumer`.
+ */
+export function requireOfficial<T>(dependency: T | undefined, name: string, consumer: string): T {
+  if (dependency !== undefined && dependency !== null) return dependency;
+  throw new Error(
+    `AuthzModule: ${consumer} needs ${name} from @nestjs/authorization, which is not available. ` +
+      'Import AuthorizationModule.forRoot() (global, its default) next to AuthzModule: ' +
+      'imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot()].',
+  );
+}

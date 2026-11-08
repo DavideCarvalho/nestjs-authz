@@ -39,8 +39,7 @@ export function PolicyFor(resource: Type<unknown>): ClassDecorator {
     // call, a hot reload) replaces the link; another policy is a conflict.
     if (linked && linked !== policy && linked.name !== policy.name) {
       throw new Error(
-        `@PolicyFor(${resource.name}) on ${policy.name}: ${resource.name} is already linked to ${linked.name}. ` +
-          'A resource has one policy; the link is process-wide, so two policies for it would silently replace each other.',
+        `@PolicyFor(${resource.name}) on ${policy.name}: ${resource.name} is already linked to ${linked.name}. A resource has one policy; the link is process-wide, so two policies for it would silently replace each other.`,
       );
     }
     Reflect.defineMetadata(POLICY_RESOURCE_METADATA, resource, target);

@@ -37,6 +37,10 @@ official guard would still deny the unannotated routes, so the option would do n
 `globalGuard: false`. `unannotated` decides what the module registers, so under `forRootAsync` it
 goes next to `useFactory`; a factory that returns it fails the startup. See the
 [step-by-step migration](/docs/authz#migrating-one-controller-at-a-time-unannotated-allow).
+
+In this mode the boot log has one expected ERROR, `@Can() is not enforced on …`: the official
+startup check recognizes only its own `AuthorizationGuard`. `AuthzGuard` does enforce those
+handlers, and `AuthzModule` logs a line right after it naming them.
 </Callout>
 
 ## Argument helpers

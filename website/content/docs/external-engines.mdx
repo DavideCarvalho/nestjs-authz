@@ -16,7 +16,7 @@ is authoritative and resource-aware:
 import type { DecisionProvider } from '@dudousxd/nestjs-authz';
 
 const provider: DecisionProvider = {
-  // true / { allowed: true } → allow · false / { allowed: false, message } → deny · undefined → abstain
+  // true / { allowed: true } → allow · false / { allowed: false } → deny · undefined → abstain
   decide(user, ability, resource) { /* ... */ },
   // optional: one round-trip for a whole gate.allowsMany(...) batch
   async decideMany(user, requests) { /* ... */ },
@@ -27,6 +27,11 @@ const provider: DecisionProvider = {
 
 Register it under the `DECISION_PROVIDER` token:
 `{ provide: DECISION_PROVIDER, useValue: provider }`.
+
+A deny has no reason. The `message` of `{ allowed: false, message }` is accepted but dropped: a
+route denial is always the official `{ statusCode: 403, message: 'Forbidden' }`. To send a
+reason, throw your own `ForbiddenException(reason)`. The route then returns your body, but no
+`denied` event is emitted and `AuthorizationService.can()` throws instead of returning `false`.
 
 ## Where it is asked
 

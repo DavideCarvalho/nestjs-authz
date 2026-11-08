@@ -31,7 +31,7 @@ The server evaluates them during the Inertia response, so the client never asks 
 
 ## Codegen — `@dudousxd/nestjs-authz-codegen`
 
-The [codegen](/docs/codegen) integration emits a **typed** `can()` into your generated client (`api.ts`). It reads the official `@Can(Policy, 'ability', byId(Resource))`, `@Permission` / `PermissionPolicy` names, `GatePolicy` abilities and `@Policy()` / `@PolicyFor()` classes. Because the ability names come from your policies, asking for an ability that doesn't exist becomes a **compile-time error** rather than a silent `false`:
+The [codegen](/docs/codegen) integration emits a **typed** `can()` into your generated client (`api.ts`). It reads the official `@Can(Policy, 'ability', byId(Resource))`, `@Permission` / `PermissionPolicy` names, `GatePolicy` abilities and `@Policy()` / `@PolicyFor()` classes. An ability's resource comes from `byId(Resource)` or the policy's `@PolicyFor` link; an unlinked policy's abilities have no resource. Because the ability names come from your policies, asking for an ability that doesn't exist becomes a **compile-time error** rather than a silent `false`:
 
 ```ts
 api.can('update', post); // ✅ ok

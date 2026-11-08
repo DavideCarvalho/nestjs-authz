@@ -41,6 +41,10 @@ API never needs it, and `@PolicyFor` applies `@Policy()` itself.
 `getPolicyResource(PostPolicy)` reads the link back (`Post`), `policyForResource(Post)` the other
 way, and `policyLinks()` lists them all.
 
+A resource has one policy, and links are process-wide. `@PolicyFor(Post)` throws when `Post` is
+already linked to a different policy; the same pair again is a no-op, and a re-declared class of
+the same name (a hot reload, a test helper) replaces the link.
+
 <Callout type="info">
 A string ability without a resource (`gate.allows('create')`) looks for a linked policy that
 defines it. Two linked policies defining `create` throw `AmbiguousAbilityException`; pass the
@@ -108,6 +112,9 @@ this.index.classAbilities();    // abilities that need no record, per policy
 
 `classAbilities()` is what the [Inertia integration](/docs/authz/ecosystem) shares with the
 frontend.
+
+The scan is cached. It runs again when a module or provider is added (a lazy module) or when a
+policy was not instantiated yet.
 
 ## Next steps
 

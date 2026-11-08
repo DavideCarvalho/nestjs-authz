@@ -1,40 +1,43 @@
 import type { ExecutionContext, Type } from '@nestjs/common';
 
+/** Per-call hints `byId(Resource, { param })` passes to the resolver. */
+export interface ResourceResolveHints {
+  /** The route param holding the id, when `byId` named one. */
+  param?: string;
+}
+
 /**
- * Resolves a resource instance for a `@Can(ability, Resource)` route so the guard
- * can pass it to the policy method. Apps register an implementation (typically
- * ORM-backed) via `AuthzModule.forRoot({ ... })` or as a provider bound to the
- * {@link RESOURCE_RESOLVER} token.
- *
- * Class-level abilities (no resource class on `@Can`) never call the resolver.
+ * Loads the resource a `byId(Resource)` argument resolver hands to the policy
+ * (`@Can(PostPolicy, 'update', byId(Post))`). Register one, typically ORM-backed, with
+ * `AuthzModule.forRoot({ resourceResolver })`. Return `undefined` for "not found":
+ * `byId` then refuses the call with a 403 before the policy runs.
  */
 export interface ResourceResolver {
-  /**
-   * Load the resource instance for `resource` in the given request context.
-   * Return `undefined` to signal "not found" — the guard treats a missing
-   * resource as a denial.
-   */
   resolve(
     resource: Type<unknown>,
     ctx: ExecutionContext,
+    hints?: ResourceResolveHints,
   ): Promise<object | undefined> | object | undefined;
 }
 
 /**
- * Default resolver: reads the route `:id` param and produces a lightweight
- * `{ id }` shim of the requested resource class. This keeps the guard usable
- * out-of-the-box (e.g. ownership checks on `resource.id`) without an ORM, while
- * apps that need real entities register their own {@link ResourceResolver}.
+ * Default resolver: reads the route `:id` param and produces a lightweight `{ id }`
+ * object whose prototype is the resource class's, enough for ownership checks on
+ * `resource.id` without an ORM. Register your own {@link ResourceResolver} to load
+ * real entities.
  */
 export class IdParamResourceResolver implements ResourceResolver {
   constructor(private readonly param: string = 'id') {}
 
-  resolve(resource: Type<unknown>, ctx: ExecutionContext): object | undefined {
+  resolve(
+    resource: Type<unknown>,
+    ctx: ExecutionContext,
+    hints?: ResourceResolveHints,
+  ): object | undefined {
+    if (ctx.getType() !== 'http') return undefined;
     const req = ctx.switchToHttp().getRequest<{ params?: Record<string, unknown> }>();
-    const id = req?.params?.[this.param];
+    const id = req?.params?.[hints?.param ?? this.param];
     if (id === undefined) return undefined;
-    // Construct a shaped instance so `instance.constructor === resource`, which
-    // is how PolicyRegistry maps an instance back to its policy.
     const instance = Object.create(resource.prototype) as Record<string, unknown>;
     instance.id = id;
     return instance;

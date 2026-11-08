@@ -1,15 +1,15 @@
 import 'reflect-metadata';
-import { AuthzModule, Gate, Policy, PolicyRegistry } from '@dudousxd/nestjs-authz';
-import { CONTEXT_ACCESSOR } from '@dudousxd/nestjs-authz';
+import { AuthzModule, Gate, PolicyFor, PolicyIndex } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule, Policy } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createAuthzShare } from '../src/share.js';
 
 class Post {}
 
-@Policy(Post)
+@PolicyFor(Post)
 class PostPolicy {
-  create(user: { id: number } | undefined) {
+  create(user: { id: number } | null) {
     return user?.id === 1;
   }
   publish() {
@@ -18,41 +18,53 @@ class PostPolicy {
   // Instance method (arity 2). Must NOT be dispatched against the class:
   // doing so would call it with `post` = the Post constructor and write a
   // bogus class-level verdict into props.auth.can.
-  update(_user: { id: number } | undefined, _post: Post) {
+  update(_user: { id: number } | null, _post: Post) {
     return true;
   }
 }
 
-const stubContext = { userRef: () => ({ type: 'User', id: 1 }) };
+/** An official policy with no resource link: keyed by its class name. */
+@Policy()
+class ReportPolicy {
+  export(user: { id: number } | null) {
+    return user?.id === 1;
+  }
+}
+
+// The official guard's user: always #1.
+const official = AuthorizationModule.forRoot({ getUser: () => ({ id: 1 }) });
 
 describe('createAuthzShare — resolves class abilities into props.auth.can', () => {
   let gate: Gate;
-  let policies: PolicyRegistry;
+  let policies: PolicyIndex;
 
   beforeEach(async () => {
     const mod = await Test.createTestingModule({
-      imports: [AuthzModule.forRoot({ policies: [PostPolicy] })],
-      providers: [{ provide: CONTEXT_ACCESSOR, useValue: stubContext }],
+      imports: [official, AuthzModule.forRoot()],
+      providers: [PostPolicy, ReportPolicy],
     }).compile();
     await mod.init();
     gate = mod.get(Gate);
-    policies = mod.get(PolicyRegistry);
+    policies = mod.get(PolicyIndex);
     // Register an ad-hoc gate so we cover gate enumeration too.
-    gate.define('access-admin', (user: { id: number } | undefined) => user?.id === 99);
+    gate.define('access-admin', (user: { id: number } | null) => user?.id === 99);
   });
 
   it('nests the can map under auth.can with policy + gate verdicts', async () => {
-    const share = createAuthzShare(gate, policies);
+    const share = createAuthzShare(gate.forUser({ id: 1 }), policies);
     const props = (await share()) as { auth: { can: Record<string, boolean> } };
     expect(props.auth.can['post.create']).toBe(true);
     expect(props.auth.can['post.publish']).toBe(false);
     expect(props.auth.can['access-admin']).toBe(false);
     // The instance method `update(user, post)` is NOT shared as a class ability.
     expect(props.auth.can['post.update']).toBeUndefined();
+    expect(props.auth.can['report.export']).toBe(true);
+    // Built-in policies are not resource abilities.
+    expect(Object.keys(props.auth.can).some((k) => k.startsWith('role.'))).toBe(false);
   });
 
   it('honors a custom propKey and abilityNamer (bare method names)', async () => {
-    const share = createAuthzShare(gate, policies, {
+    const share = createAuthzShare(gate.forUser({ id: 1 }), policies, {
       propKey: 'abilities',
       abilityNamer: (_resource, method) => method,
     });

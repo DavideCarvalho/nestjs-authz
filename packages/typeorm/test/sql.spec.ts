@@ -1,7 +1,8 @@
 import 'reflect-metadata';
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import type { DataSource } from 'typeorm';
 import { describe, expect, it } from 'vitest';
-import { Placeholders, assertSafeIdentifier, isPostgresFamily, placeholder } from '../src/sql.js';
+import { Placeholders, isPostgresFamily, placeholder } from '../src/sql.js';
 
 /** A minimal DataSource stub — only `options.type` is read by the sql helpers. */
 function ds(type: string): DataSource {

@@ -1,61 +1,121 @@
 # `@dudousxd/nestjs-authz` — DESIGN
 
-> Status: spec (impl pendente). Fase 1 do `../ECOSYSTEM-AUDIT.md`. Depende de `nestjs-context` (current user).
+> Status: 0.9 em cima do [`@nestjs/authorization`](https://docs.nestjs.com/security/authorization) (0.1.x, NestJS 12).
 
 ## 1. O que é (e o que NÃO é)
 
-**Authorization** (o quê o user pode), idioma Laravel Gate/Policy. **NÃO é authentication** — não cria/guarda usuário, não faz login. Só lê o **current user** (do `nestjs-context`, ou recebido) e decide. Auth é BYO (Passport/JWT/session; `adonis-authkit` é Adonis, não Nest).
+**Os extras** que faltam no `@nestjs/authorization` oficial: RBAC persistido, helpers de `@Can`,
+um `Gate` de serviço com batch e gates ad-hoc, super-admin global, query scoping, e as colas de
+front (inertia/codegen/client/react) e de teste. **NÃO é authentication** e **não é mais um
+engine de autorização**: quem decide é o oficial.
 
-`authz` = autori**z**ation (authn = authenticatio**n**). Nome mantido por convenção.
+## 2. Decisão: em cima do oficial, não paralelo
 
-## 2. Decisão de engine: PRÓPRIO thin (não wrapper)
+Até a 0.8 tínhamos `@Policy(Resource)`, `@Can('ability', Resource)`, `CanGuard`, `RolesGuard` e
+um Gate com engine próprio. O NestJS lançou o `@nestjs/authorization` (`@Policy()`, `@Can(Policy,
+'ability', args?)`, `Can.Anyone()`, `AuthorizationGuard` global e deny-by-default,
+`AuthorizationService.can/authorize`, eventos de negação). Regra do dono: **o que o oficial faz,
+a gente larga e usa o dele; o que falta, a gente mantém e constrói em cima.**
 
-Landscape **não** é green-field: **CASL** (`stalniy/casl`, isomórfico; `getjerry/nest-casl`) e **Casbin** (`node-casbin/nest-authz`) cobrem RBAC/ABAC. Mesmo assim → **engine próprio**, porque:
-- Gate/Policy do Laravel **não é engine pesado** — é despacho fino sobre métodos TS (`update(u, post){...}` É a condição).
-- CASL/Casbin resolvem *condição-como-dado* / *policy externa* — modelo que o idioma Laravel deliberadamente não tem; embrulhar importaria complexidade + mental model estranho que briga com `@Policy`.
-- **Diferencial = idioma Laravel + as colas (§6)**, não o motor.
+| Oficial (usamos) | Nosso (em cima) |
+|---|---|
+| `@Policy()`, `@Can()`, `Can.Anyone()`, `AuthorizationGuard`, `getUser` | `RolePolicy`, `PermissionPolicy`, `GatePolicy` (policies oficiais) |
+| `AuthorizationService.can/authorize` | `Gate` (string abilities, `allowsMany`, `scope`, `define`, `hasRole`, user ambiente) |
+| `before()` por policy | `AuthzPolicy` / `superAdminBefore` / `decisionProviderBefore` (super-admin global + PDP externo) |
+| `AuthenticationContext.user` (`@nestjs/authentication`) | user ambiente do `Gate` (dentro do escopo dele é a resposta final; nestjs-context só fora de qualquer escopo) |
+| `args` resolver de `@Can` | `byId(Post)`, `roles()`, `permission()`, `ability()`, `staticCanArgs()` |
+| evento de negação | canal `authz:decision` com allow **e** deny |
+| — | `@PolicyFor(Post)` (link recurso → policy), `@Roles`/`@Permission` (açúcar) |
 
-## 3. As 3 camadas
+## 3. As camadas
 
-**1. Gates** — habilidade ad-hoc sem model:
+**1. Policies** — do oficial. `@PolicyFor(Post)` só adiciona o link usado pelos extras:
 ```ts
-gate.define('access-admin', (user) => user.role === 'staff');
-```
-
-**2. Policies** — classe por recurso (o coração):
-```ts
-@Policy(Post)
-class PostPolicy {
-  before(user) { if (user.isAdmin) return true; }          // bypass; undefined = segue
-  view(user, post)   { return post.published || post.authorId === user.id; }
-  update(user, post) { return post.authorId === user.id; }
-  create(user)       { return user.verified; }              // ability de classe (sem instância)
+@Policy()
+@PolicyFor(Post)
+class PostPolicy extends AuthzPolicy {          // AuthzPolicy = super-admin global no before()
+  view(user: User | null, post: Post)   { return post.published || post.authorId === user?.id; }
+  update(user: User | null, post: Post) { return post.authorId === user?.id; }
+  create(user: User | null)             { return user?.verified === true; }
+  scope(user: User)                     { return eq('authorId', user.id); } // query scoping
 }
 ```
-Engine = **registry de policies** (por classe de recurso) + **resolver de recurso** + dispatch. ~poucas centenas de linhas.
 
-**3. RBAC (roles/permissions persistido)** — pacote **opt-in separado** (core não tem DB, igual Laravel separa de spatie/permission):
+**2. RBAC** como policies oficiais:
 ```ts
-await user.assignRole('editor');     // editor tem permission 'posts.publish'
-gate.allows('posts.publish');        // policy/gate pode consultar a camada RBAC
+@Can(RolePolicy, 'has', roles('admin', 'editor'))      // == @Roles('admin', 'editor')
+@Can(PermissionPolicy, 'has', permission('posts.publish')) // == @Permission('posts.publish')
 ```
+`RolePolicy` lê `user.roles`/`user.role` (ou `resolveRoles`) ∪ o `ROLE_PROVIDER` do adapter;
+`PermissionPolicy` usa o `PERMISSION_PROVIDER` (wildcard `posts.*`, tenant, permissões diretas).
 
-## 4. Enforcement (idioma Nest)
+**3. Gates ad-hoc** — `gate.define('access-admin', fn)`, usáveis em rota por
+`@Can(GatePolicy, 'allows', ability('access-admin'))`.
 
-**Decorator + guard:**
+## 4. Enforcement
+
+**Rota** — só o guard oficial (global, deny-by-default: rota sem `@Can`/`Can.Anyone()`/`@Public()`
+é negada; convidado → 401, logado → 403):
 ```ts
 @Patch(':id')
-@Can('update', Post)   // guard resolve o Post pelo :id e roda PostPolicy.update(currentUser, post)
-update(@Param('id') id) {}
+@Can(PostPolicy, 'update', byId(Post))  // byId carrega o Post do :id pelo ResourceResolver
+update(@Req() req) { const post = authorizedResource(req, Post); }  // sem carregar 2x
 ```
 
-**Programático** (user vem do context, não precisa passar):
+**Serviço** — `Gate` delega toda decisão de policy ao `AuthorizationService`:
 ```ts
-this.gate.authorize('update', post);     // throw ForbiddenException se negar
-if (this.gate.allows('delete', post)) {}
+await gate.forUser(user).authorize(PostPolicy, 'update', post); // igual ao oficial
+await gate.forUser(user).authorize('update', post);             // string: policy linkada ao Post
+await gate.forUser(user).allowsMany([{ ability: 'update', resource: post }, ...]);
 ```
+Ordem da string ability: `superAdmin` (recebe o recurso) → `DECISION_PROVIDER` (PDP externo:
+allow/deny final, `undefined` abstém) → policy linkada (oficial: `before()` + ability, só `true`
+literal libera) → permissão persistida → gate ad-hoc → `AbilityNotResolvedException`. A forma com
+classe de policy é exatamente o oficial.
 
-**Resolver de recurso** (a pegadinha que justifica a lib): `@Can('update', Post)` precisa carregar a instância p/ passar à policy. Default = carrega por `:id` via ORM; override por rota; abilities de classe (`create`) pulam.
+**A policy tem a palavra final.** Uma permissão persistida com o nome de uma ability da policy
+(`update`) **não** a contorna (antes contornava, estilo spatie `Gate::before`); só `superAdmin`
+curto-circuita. Permissões continuam liberando abilities nomeadas que nenhuma policy define
+(`posts.publish`). Mesmo critério no `scope()`.
+
+**User ambiente** (chamada sem `forUser`): `AuthenticationContext.user` do
+`@nestjs/authentication` (peer opcional, achado pelo `ModuleRef` com a classe como token; é um
+`AsyncLocalStorage`, certo no handler e em tudo que ele aguarda). Com o escopo dele ativo
+(`scope.current` presente: chamada que o interceptor dele abriu, ou `AuthenticationContext.run()`)
+a resposta é final, e `null` é convidado. Só sem escopo nenhum (worker, cron, guard antes do
+interceptor) → o ref do nestjs-context (hidratado por `resolveUser`, uma vez por request) → senão
+convidado (`null`). O pacote não exporta o `AuthenticationScope`; lemos o campo (privado no TS)
+`scope` do `AuthenticationContext`. Versão que o esconda cai no comportamento antigo (user é
+resposta, `null` não).
+
+**Modo de migração (`unannotated: 'allow'`).** O guard oficial é deny-by-default e não tem opção
+para isso; um app grande (rotas públicas, controllers de outras libs) não liga tudo de uma vez.
+Com `AuthzModule.forRoot({ unannotated: 'allow' })` registramos um `APP_GUARD` próprio
+(`AuthzGuard`) que **delega** ao `AuthorizationGuard` oficial (injetado; o módulo oficial o
+exporta) quando a rota tem requisitos (`routeRequirements`: classe + método, `Can.Anyone()` /
+`@Public()` no método tiram os da classe) e deixa passar quando não tem. Delegar em vez de
+reimplementar: mesmo `getUser`, avaliador, 401/403 e evento `denied`, sem copiar nada. Exige
+`AuthorizationModule.forRoot({ globalGuard: false })`; com os dois globais o oficial continua
+negando, então **o boot falha** (um aviso passaria despercebido e a opção não faria nada). A
+detecção procura um `APP_GUARD` cuja instância tenha a marca oficial
+`Symbol.for('@nestjs/authorization:guard')`. A opção é estática (decide providers): no
+`forRootAsync` fica ao lado do `useFactory`, e uma factory que a devolva falha o boot. Default
+`'deny'`: não registra nada.
+
+**Controllers que o módulo monta** (hoje só `POST /authz/can`): cada registro cria a sua classe,
+marcada `authorization:can-anyone` (responde convidados com `false`), e recebe as
+`decorators?: ClassDecorator[]` (convenção do `@nestjs/mcp`), aplicadas depois das nossas, sem
+vazar entre registros.
+
+**Resolver de argumento sem DI.** Os resolvers do `@Can` oficial só recebem o
+`ExecutionContext`. O `AuthzModule` registra no boot uma referência de módulo (resolver de
+recurso, `superAdmin`, o `DECISION_PROVIDER`, `getUser` oficial) que `byId` e `AuthzPolicy` leem. Um app por processo
+é o esperado; com vários, o último a subir vence.
+
+**Args estáticos.** Resolvers cujos args não dependem da chamada (`roles`, `permission`,
+`ability`, `staticCanArgs`) carregam uma propriedade não-enumerável
+`Symbol.for('@dudousxd/static-can-args')` com o array de args, para o agente do Aviary avaliar
+a exigência antes de oferecer uma tool.
 
 ## 5. Persistência (RBAC) — segue §3.10 do audit À RISCA
 
@@ -83,117 +143,92 @@ AuthzRbacModule.forRootAsync({
 
 `ensureAuthzSchema` = **cria tabela faltante + adiciona coluna faltante** (non-destructive); colunas pós-v1 nullable/default. Adapters: `nestjs-authz-{typeorm,mikro-orm,prisma,drizzle}` (mikro usa `getUpdateSchemaSQL({safe:true})`; prisma consumer-managed).
 
-## 6. Colas (o diferencial)
+## 6. Colas
 
 | Cola | O que faz |
 |---|---|
-| **nestjs-context** | `gate.authorize('update', post)` lê o current user sozinho; permissions tenant-scoped via `Context.tenantId()` |
-| **authkit/auth (BYO)** | guard de auth popula `Context.userRef()`; authz lê — zero acoplamento |
-| **nestjs-authz-inertia** | middleware `HandleInertiaRequests`-style injeta `auth.can` nas props → front recebe `can('update', post)` |
-| **nestjs-authz-codegen** | emite `can()` **tipado** no `api.ts` (ability errada = erro de compile) |
-| **nestjs-authz-telescope** | watcher de autorização (ability, allow/deny, motivo, user) → aba; mata debug de 403 |
-| **nestjs-authz-react** | `useCan()` + `<Can ability="update" of={post}>` |
-| **filter** (depois) | policy `viewAny` aplica escopo de query no filter (só retorna o que o user pode ver) |
+| **nestjs-authz-inertia** | compartilha `auth.can` com as abilities sem registro de toda policy oficial (linkada ou não), para o user que o guard oficial lê; redireciona 401 → login e 403 → `/403` |
+| **nestjs-authz-codegen** | lê `@Can(Policy, 'ability', byId(X))`, `@Permission`, `GatePolicy` e `@Policy()`/`@PolicyFor()` e emite `can()` tipado |
+| **nestjs-authz-client / react** | store de abilities + `useCan()`/`<Can>` (sem mudança de API) |
+| **telescope** | canal `aviary:authz:decision` com allow **e** deny (o oficial só publica negações em `nestjs:authorization:denied`) |
+| **nestjs-authz-testing** | `buildGate` num testing module real com o oficial, `expectCan`, `requirementsOf()` |
 
 ## 7. Config mínima
 ```ts
-AuthzModule.forRoot({
-  policies: [PostPolicy],        // ou auto-discovery por @Policy
-  superAdmin: (u) => u.isAdmin,  // before-hook global
-  // resolveUser?  // ⚠️ ver "current user no caminho do context" abaixo
-  // resourceResolver? / idParam?  // override do resolver default (default: por :id)
-});
+imports: [
+  AuthorizationModule.forRoot({ getUser: (ctx) => ctx.switchToHttp().getRequest().user }),
+  AuthzModule.forRoot({
+    superAdmin: (u) => u?.isRoot === true,  // honrado por AuthzPolicy, RolePolicy, PermissionPolicy, Gate
+    resourceResolver: new OrmResourceResolver(),  // para byId(); default lê :id e monta { id }
+  }),
+  AuthzRbacModule.forRootAsync({ ... }),    // opcional: RBAC persistido
+]
 ```
+`resolveUser` só vale para o user **ambiente** do `Gate` (chamada sem `forUser`, via
+nestjs-context, quando não há escopo do `@nestjs/authentication`). Rotas nunca usam: o user vem do
+`getUser` oficial.
 
-### ⚠️ current user no caminho do context (`resolveUser`)
+## 7.1 Compromissos forçados pela API oficial
 
-`@Can(...)` / `gate.allows(...)` (sem `forUser`) leem o current user do
-`nestjs-context` como um **`UserRef` cru = `{ type, id }`** — NÃO a sua entidade
-`User` hidratada. Logo, por padrão, `superAdmin: u => u.isAdmin` e checagens tipo
-`post.authorId === user.id` contra uma coluna real **não enxergam campos
-hidratados** no caminho do context (só `{type,id}`). Duas saídas:
-
-1. **Hidratar** — passe `resolveUser: (ref) => loadUser(ref)` no `forRoot`; o Gate
-   carrega a entidade a partir do `{type,id}` antes de policies/`before`/`superAdmin`.
-   `resolveUser` retornando nullish = caminho de negação (anônimo).
-2. **Comparar por id** — escreva as policies contra o `ref` (`Number(user.id) === ...`),
-   sem depender de campos da entidade.
-
-No caminho `gate.forUser(entity)` você recebe exatamente o que passou — `resolveUser`
-NÃO é aplicado. `forUser(undefined|null)` = requisição anônima explícita → negação
-(mesmo path que o context não-autenticado), nunca um `TypeError`/500.
-
-### Resolver de recurso default (out-of-the-box)
-
-`forRoot`/`forRootAsync` registram um `IdParamResourceResolver` no token
-`RESOURCE_RESOLVER` automaticamente, então `@Can('update', Post)` funciona num
-install limpo (lê o `:id` da rota e monta um shim `{ id }`). Override por
-`resourceResolver` (instância própria, p.ex. ORM-backed) ou ajuste o nome do param
-por `idParam`.
+- **Deny-by-default.** O guard oficial nega rota sem declaração. Antes, rota sem `@Can` passava.
+  `unannotated: 'allow'` (§4) adia isso durante a migração.
+- **`@Roles` em classe soma (AND)** com o do método; antes o do método sobrescrevia.
+- **Só `true` literal libera.** `{ allowed, message }` (`PolicyResponse`) e o hook `after` foram
+  removidos: o avaliador oficial não tem "sem opinião" nem mensagem; a resposta nunca nomeia a
+  policy/ability (o `AuthorizationError` carrega isso para log).
+- **Policy recebe `null`** para convidado (antes, convidado era negado sem chamar a policy).
+  Tipar o user como `User | null`.
+- **Super-admin não é global no guard**: só policies que estendem `AuthzPolicy` (ou chamam
+  `superAdminBefore`) o consultam.
+- **Resolver de args sem DI** → referência de módulo registrada no boot (§4).
+- **Constantes de metadata não exportadas** → lidas/escritas por string
+  (`'authorization:can'`, `'authorization:policy'`, `'authorization:can-anyone'`) e o símbolo
+  `Symbol.for('@nestjs/authentication:public')` do `@Public()`, com teste de contrato
+  (`official-contract.spec.ts`).
+- **Registro oficial não exportado** → `PolicyIndex` acha policies pelo `DiscoveryService` com o
+  mesmo critério (token ou metatype marcado).
+- **O `@Can` string depreciado** escreve um requisito cujo `policy` é um getter preguiçoso
+  (resolvido na checagem de boot do oficial), para não depender da ordem de import.
+- **Allow no guard**: o oficial não emite. Um interceptor (roda depois que todos os guards
+  liberaram) publica um allow por requisito; negações vêm do `AuthorizationEvents`.
 
 ## 8. Pacotes
-- `@dudousxd/nestjs-authz` — core: gates + policies + `@Can` guard + resolver (zero DB)
+- `@dudousxd/nestjs-authz` — extras sobre o oficial (zero DB)
 - `@dudousxd/nestjs-authz-{typeorm,mikro-orm,prisma,drizzle}` — RBAC persistido (§5)
-- `@dudousxd/nestjs-authz-{inertia,codegen,react,telescope,testing}` — colas (§6)
+- `@dudousxd/nestjs-authz-{inertia,codegen,client,react,testing}` — colas (§6)
 
-## 8.1 Adições pós-v1 (batch, cache, direct/tenant, testing)
+## 8.1 Batch, cache, direct/tenant
 
-Quatro melhorias coesas, todas backward-compatible (colunas nullable/defaulted, seams opcionais):
+- **Batch (`gate.allowsMany`)** — resolve o user UMA vez e compartilha UM `PermissionCache`; um
+  item que falha nega só ele. Aceita `{ ability, resource? }` e `{ policy, ability, args? }`.
+  `POST /authz/can` aceita array; o client tem `createCanBatch`; o codegen emite `canBatch`.
+- **Cache por request** — memo de `provider.getPermissions(user)`, `RoleProvider.getRoles(user)`
+  e do `resolveUser` no store do nestjs-context. Compartilhado entre o guard oficial
+  (`RolePolicy`/`PermissionPolicy`) e as chamadas do `Gate` no handler: uma busca por user por
+  request. Chave = a linha que o user nomeia (classe ou `type` + `id`; objeto puro sem `type` →
+  identidade). O set é compilado uma vez (`CompiledPermissions`); com `exhaustivePermissions`
+  (os adapters marcam) um miss não chama `hasPermission`. Sem context, sem memo (correção intacta).
+- **Permissões diretas + roles por tenant** — inalterado (adapters).
 
-- **Batch (`gate.allowsMany`)** — autoriza N habilidades resolvendo o user UMA vez e
-  compartilhando UM `PermissionCache` por lote (mata o N+1 de uma list page). Endpoint
-  `POST /authz/can` aceita TAMBÉM um array (`[{ability,resource?}]` → `[{...,allowed}]`),
-  e o client ganhou `createCanBatch` (faz POST só dos cache-misses, num único request).
-  O codegen emite `canBatch(...)` tipado. Comparáveis: Cerbos `CheckResources` (batch),
-  CASL não tem batch nativo.
-- **Cache de permissões por request** — memo sobre `provider.getPermissions(user)`,
-  guardado no store do nestjs-context (`Symbol.for(...request-permission-cache)`).
-  Uma busca por request; standalone (sem context) degrada para sem-memo, correção
-  intacta. Tenant é fixo por request, então a chave (user) basta.
-- **Permissões diretas + roles por tenant (typeorm)** — `giveUserPermission`/
-  `revokeUserPermission` + tabela `authz_user_permission` (spatie
-  `$user->givePermissionTo`). `assignRole(user, role, { tenantId })` escopa por tenant;
-  coluna `tenantId` é **defaulted `''`** (não nullable) para entrar na PK composta com
-  unicidade portável entre SQLite/MySQL/Postgres (`NULL` quebraria idempotência do
-  grant global). `getPermissionsForUser` = UNIÃO de role-derived (tenant-aware) +
-  diretas (não escopadas). Tenant vem do nestjs-context quando presente.
-- **`@dudousxd/nestjs-authz-testing`** — `buildGate`/`buildBoundGate` (Gate real,
-  zero DB/Nest), `expectCan`/`expectCannot` (Pundit-style matchers; `expectCannot`
-  trata ability não-resolvida como "cannot"), e `FakePermissionProvider`/
-  `FakeRoleProvider` in-memory (wildcard via o matcher do core).
+## 8.2 Query scoping (`gate.scope` + `applyScope`)
 
-## 8.2 Query scoping / policy filter (`gate.scope` + `applyScope`)
+AST de condição ORM-neutra (`ScopeConstraint`: `all` | `none` | `condition` | `and`/`or`),
+aplicada pelos adapters como `WHERE` parametrizado. A policy oficial declara `scope(user,
+entity)` (ou o fallback no método da ability, `viewAny`). `gate.scope(Post | PostPolicy)` segue
+a ordem: `superAdmin` → `all`; `planScope` do `DECISION_PROVIDER` (se não abstém) → usado como
+está; `before()` `true`/`false` → `all`/`none`; convidado → `none`; o `scope()` da policy. Sem
+policy ou sem método, um grant de permissão → `all`, senão `none` (a permissão não alarga o
+scope de uma policy). `scope` não é ability (não
+retorna boolean) e é ignorado pelas listas de abilities.
 
-O diferencial ABAC para list endpoints: hoje a authz decide sim/não para UM recurso;
-para listas você ou over-fetch + filtra em memória (N+1 / risco de leak) ou escreve
-`WHERE` na mão. Agora uma policy pode declarar um **scope** (conceito `accessibleBy` do
-CASL / `policy_scope` do Pundit / `PlanResources` do Cerbos) que produz uma **constraint
-ORM-neutra**, aplicada na camada do DB.
+## 8.3 PDP externo (`DECISION_PROVIDER`, Cerbos em `/cerbos`)
 
-- **Representação escolhida — AST de condição (dado puro, não callback).** `ScopeConstraint`
-  = `{ kind: 'all' }` (allow-all) | `{ kind: 'none' }` (deny-all) |
-  `{ kind: 'condition', field, op, value }` | `{ kind: 'and'|'or', nodes }`. Operadores:
-  `eq/ne/gt/gte/lt/lte/in/nin/isNull/isNotNull`. Builders: `eq`, `where`, `and`, `or`,
-  `scopeAll`, `scopeNone`. Escolhido por ser **serializável, seguro e portável** — cada
-  adapter percorre a árvore e emite `WHERE` parametrizado. Espelha o Query Plan do Cerbos
-  (`ALWAYS_ALLOWED`/`ALWAYS_DENIED`/AST), diferente do `where`-object acoplado a ORM do
-  CASL. (Comparados: CASL `accessibleBy`, Pundit `policy_scope`, Cerbos `PlanResources`.)
-- **API core.** `@Policy(Entity)` define um método `scope(user)` (ou fallback estilo
-  `viewAny`) retornando `ScopeConstraint | boolean | null`. `gate.scope(Entity, ability?)`
-  / `boundGate.scope(...)` resolvem a constraint seguindo a MESMA ordem de grant do
-  single-resource: super-admin / `before` / permission-provider grant → **allow-all**;
-  anônimo, sem policy, ou sem método de scope → **deny-all** (deny-by-default consistente).
-  Tenant do nestjs-context flui pelo permission-provider (mesmo seam do RBAC tenant-aware).
-- **Aplicação TypeORM (caminho primário, manual).**
-  `applyScope(qb, gate, Entity)` (resolve + aplica) ou
-  `applyScopeConstraint(qb, await gate.scope(Entity))` (split). Usa placeholders nomeados
-  do TypeORM (`:p`, `:...p` para `IN`) — valores SEMPRE bound, nunca interpolados;
-  identificadores (coluna/alias) validados por `assertSafeIdentifier` (mesmo allowlist do
-  store). `allow-all` não adiciona `WHERE`; `deny-all` adiciona `1 = 0`. `compileScope` é
-  o compilador puro (testável sem DB).
-- **Adapters seguintes (deferidos).** A AST e o adapter TypeORM estão prontos;
-  mikro-orm / prisma reusam a MESMA `ScopeConstraint` do core (só falta o walker
-  específico) — follow-up.
+Seam autoritativo (allow **e** deny, `undefined` abstém), ao contrário do RBAC (só grant).
+Consultado logo depois do `superAdmin`: nas rotas, pelo `before()` de toda policy que estende
+`AuthzPolicy` (com o primeiro argumento da ability como recurso; `RolePolicy`/`PermissionPolicy`
+não consultam — suas abilities não nomeiam recurso); no `Gate`, antes da policy de uma string
+ability; `allowsMany` faz um `decideMany` só; `scope()` usa `planScope`. O adapter Cerbos falha
+fechado (nega).
 
 ## 8.b Matriz de testes multi-dialeto (TypeORM)
 
@@ -237,6 +272,29 @@ escondeu bugs que **só** Postgres/MySQL reais pegam (vide REVIEW.md — bug do 
    `driver.escape` do `DataSource`, tornando o predicado portável.
 
 ## 9. Não-objetivos
-- Não autentica (não cria/loga/guarda user; só referencia por id).
-- Não reimplementa CASL/Casbin (condição-como-dado / policy externa estão fora do escopo).
+- Não autentica (use `@nestjs/authentication`, Passport, etc.).
+- Não reimplementa o engine: decisões de policy são do `@nestjs/authorization`.
 - Core não persiste — RBAC é adapter opt-in.
+
+## 10. Removido na 0.9 (sem shims de compatibilidade)
+
+A 0.9 continua 0.x e não carrega shims: as formas antigas saíram de vez e cada uma vira direto a
+oficial.
+
+| 0.8 | 0.9 |
+|---|---|
+| `@Can('update', Post)` (nosso) | `@Can(PostPolicy, 'update', byId(Post))` (oficial) |
+| `@Can('create', Post, { classLevel: true })` | `@Can(PostPolicy, 'create')` |
+| `@Can('access-admin')` | `@Can(GatePolicy, 'allows', ability('access-admin'))` |
+| `@Policy(Post)` (nosso) | `@Policy()` (oficial) + `@PolicyFor(Post)` |
+
+Fica a API de string do `Gate` (`gate.allows('update', post)`, `gate.allows('posts.publish')`):
+não é compatibilidade, é o que o `AuthorizationService.can(Policy, ability, user, …)` oficial não
+tem — achar a policy pelo recurso (`@PolicyFor`), permissões persistidas, gates ad-hoc
+(`define`), `superAdmin`, o PDP externo e batch (`allowsMany`). É também o contrato do
+`POST /authz/can`, do `GatePolicy`, do inertia e do client (que só conhecem nomes de ability).
+
+Também removidos na 0.9: o `@Can` em string e o `@Policy(Resource)` (com `CanOptions`), `CanGuard`, `RolesGuard`, `PolicyRegistry` (→ `PolicyIndex`),
+`CAN_METADATA`, `ROLES_METADATA`, `AuthzModuleOptions.policies` (→ providers ou
+`AuthorizationModule.forRoot({ policies })`), `after`, `PolicyResponse`,
+`PolicyNotDecoratedException`, `ResourceResolverMissingException`.

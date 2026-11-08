@@ -1,11 +1,14 @@
 import 'reflect-metadata';
 import { HTTP } from '@cerbos/http';
-import { describe, expect, it } from 'vitest';
+import { Policy } from '@nestjs/authorization';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { CerbosDecisionProvider } from '../src/cerbos/index.js';
-import { Policy } from '../src/decorator/policy.decorator.js';
-import { Gate } from '../src/gate.js';
-import { PolicyRegistry } from '../src/policy-registry.js';
+import type { Gate } from '../src/gate.js';
+import { PolicyFor } from '../src/links.js';
+import { AuthzPolicy } from '../src/policies/authz-policy.js';
 import { eq } from '../src/scope.js';
+import { DECISION_PROVIDER } from '../src/tokens.js';
+import { bootContext } from './support/app.js';
 
 /**
  * Against a REAL Cerbos PDP loaded with `test/fixtures/cerbos/*.yaml`:
@@ -27,8 +30,9 @@ class Doc {
   ) {}
 }
 
-@Policy(Doc)
-class DocPolicy {
+@Policy()
+@PolicyFor(Doc)
+class DocPolicy extends AuthzPolicy {
   // Would allow everything — proves Cerbos' verdict wins.
   update() {
     return true;
@@ -48,9 +52,12 @@ describeCerbos('CerbosDecisionProvider against a real Cerbos PDP', () => {
         : undefined,
     scope: { resource: (entity) => (entity === Doc ? { kind: 'doc' } : undefined) },
   });
-  const registry = new PolicyRegistry();
-  registry.register(new DocPolicy() as never);
-  const gate = new Gate(registry, {}, undefined, undefined, undefined, undefined, provider);
+  let gate: Gate;
+  beforeAll(async () => {
+    ({ gate } = await bootContext({
+      providers: [DocPolicy, { provide: DECISION_PROVIDER, useValue: provider }],
+    }));
+  });
 
   it('allows / denies single checks (Cerbos overrides the permissive policy)', async () => {
     expect(await gate.forUser({ id: 'u1' }).allows('update', new Doc('d1', 'u1'))).toBe(true);

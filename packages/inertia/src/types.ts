@@ -1,9 +1,9 @@
-import type { ArgumentsHost, ForbiddenException } from '@nestjs/common';
+import type { ArgumentsHost, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { AbilityNamer, CanMap } from './resolve-abilities.js';
 
 /**
  * Configures the {@link AuthzDenialFilter}: how authorization denials
- * (`@Roles`/`@Can` → `ForbiddenException`) render on Inertia requests. Non-Inertia
+ * (the official guard's `UnauthorizedException` / `ForbiddenException`) render on Inertia requests. Non-Inertia
  * (REST) requests are unaffected — they keep the normal 403 JSON.
  */
 export interface AuthzDenialOptions {
@@ -15,7 +15,7 @@ export interface AuthzDenialOptions {
    */
   enabled?: boolean;
   /**
-   * Redirect target for an UNAUTHENTICATED denial (no `CONTEXT_ACCESSOR` user).
+   * Redirect target for an UNAUTHENTICATED denial (a 401, or a 403 while nestjs-context has no user).
    *
    * Default: `'/login'`.
    */
@@ -32,7 +32,7 @@ export interface AuthzDenialOptions {
    * `ForbiddenException` and the `ArgumentsHost`. When provided, it replaces the
    * default redirect behavior for Inertia requests.
    */
-  handler?: (exception: ForbiddenException, host: ArgumentsHost) => void;
+  handler?: (exception: ForbiddenException | UnauthorizedException, host: ArgumentsHost) => void;
 }
 
 /**

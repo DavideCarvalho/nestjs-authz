@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import {
   CONTEXT_ACCESSOR,
   PERMISSION_PROVIDER,
@@ -17,7 +18,8 @@ import {
   type Type,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import type { TypeOrmAuthzStore } from './typeorm-authz.store.js';
+import { TypeOrmAuthzStore } from './typeorm-authz.store.js';
+import type { AuthzStoreOptions } from './types.js';
 
 /** Injection token holding the {@link TypeOrmAuthzStore} the RBAC module manages. */
 export const AUTHZ_RBAC_STORE = Symbol.for('@dudousxd/nestjs-authz-typeorm:store');
@@ -30,9 +32,7 @@ export const AUTHZ_RBAC_OPTIONS = Symbol.for('@dudousxd/nestjs-authz-typeorm:opt
  */
 export type UserRefMapper = (user: unknown) => UserRef | undefined;
 
-export interface AuthzRbacModuleOptions {
-  /** The TypeORM RBAC store (built with the app-provided DataSource). */
-  store: TypeOrmAuthzStore;
+export interface AuthzRbacModuleBaseOptions {
   /**
    * Run `ensureAuthzSchema` on bootstrap (default `true`, non-destructive). Set `false`
    * to manage the schema via your ORM's migrations (`createAuthzTables` helper).
@@ -45,10 +45,75 @@ export interface AuthzRbacModuleOptions {
   userRefFrom?: UserRefMapper;
 }
 
-export interface AuthzRbacModuleAsyncOptions {
-  imports?: unknown[];
-  inject?: unknown[];
-  useFactory: (...args: unknown[]) => Promise<AuthzRbacModuleOptions> | AuthzRbacModuleOptions;
+/**
+ * Where the store comes from: build it yourself (`store`), or name a TypeORM connection
+ * registered with NestJS's `@nestjs/typeorm` (`connectionName`, `'default'` for the default one) and
+ * the module builds the store from `getDataSourceToken(connectionName)`, with `storeOptions`.
+ */
+export type AuthzRbacModuleOptions = AuthzRbacModuleBaseOptions &
+  (
+    | {
+        /** The RBAC store, built with the app-provided TypeORM connection. */
+        store: TypeOrmAuthzStore;
+        connectionName?: never;
+        storeOptions?: never;
+      }
+    | {
+        /** The `@nestjs/typeorm` connection to build the store from (`'default'` for the default one). */
+        connectionName: string;
+        /** Options for the store built from `connectionName` (table names, schema). */
+        storeOptions?: AuthzStoreOptions;
+        store?: never;
+      }
+  );
+
+/** {@link AuthzRbacModuleOptions} once the store is resolved — what the providers read. */
+type ResolvedRbacOptions = AuthzRbacModuleBaseOptions & { store: TypeOrmAuthzStore };
+
+export type AuthzRbacModuleAsyncOptions =
+  | {
+      imports?: unknown[];
+      inject?: unknown[];
+      useFactory: (...args: unknown[]) => Promise<AuthzRbacModuleOptions> | AuthzRbacModuleOptions;
+      connectionName?: never;
+      storeOptions?: never;
+    }
+  | {
+      /** Build the store from this `@nestjs/typeorm` connection; the factory returns the other options. */
+      connectionName: string;
+      storeOptions?: AuthzStoreOptions;
+      imports?: unknown[];
+      inject?: unknown[];
+      useFactory?: (
+        ...args: unknown[]
+      ) => Promise<AuthzRbacModuleBaseOptions> | AuthzRbacModuleBaseOptions;
+    };
+
+const requirePeer = createRequire(import.meta.url);
+
+/**
+ * The injection token `@nestjs/typeorm` registers the connection `name` under, from its own
+ * `getDataSourceToken()`. An optional peer, loaded only for `connectionName`.
+ */
+function connectionToken(name: string): unknown {
+  let official: { getDataSourceToken(name?: string): unknown };
+  try {
+    official = requirePeer('@nestjs/typeorm');
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    const message = String((error as { message?: unknown }).message ?? '');
+    if (
+      (code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND') &&
+      message.includes("'@nestjs/typeorm'")
+    ) {
+      throw new Error(
+        'AuthzRbacModule: connectionName needs @nestjs/typeorm, which is not installed. ' +
+          'Install it, or build the store yourself and pass `store`.',
+      );
+    }
+    throw error;
+  }
+  return official.getDataSourceToken(name);
 }
 
 /**
@@ -123,7 +188,7 @@ class RbacPermissionProvider implements PermissionProvider {
   };
 
   constructor(
-    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: ResolvedRbacOptions,
     @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
@@ -171,7 +236,7 @@ class RbacRoleProvider implements RoleProvider {
   };
 
   constructor(
-    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: ResolvedRbacOptions,
     @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
@@ -193,7 +258,7 @@ class RbacRoleProvider implements RoleProvider {
 @Injectable()
 class AuthzRbacBootstrap implements OnModuleInit {
   constructor(
-    @Optional() @Inject(AUTHZ_RBAC_OPTIONS) private readonly options?: AuthzRbacModuleOptions,
+    @Optional() @Inject(AUTHZ_RBAC_OPTIONS) private readonly options?: ResolvedRbacOptions,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -204,45 +269,74 @@ class AuthzRbacBootstrap implements OnModuleInit {
 }
 
 /**
- * Wires persisted RBAC into the core authz Gate. The app provides the `DataSource`
- * (via `inject`/`useFactory`) and constructs the {@link TypeOrmAuthzStore} — this module
- * NEVER hardcodes a connection token. On init it registers the RBAC permission check into
- * the Gate via the {@link PERMISSION_PROVIDER} seam, so `gate.allows('some.permission')`
- * consults persisted permissions, and (by default) ensures the schema exists.
+ * Wires persisted RBAC into the core authz Gate. Either the app builds the
+ * {@link TypeOrmAuthzStore} from its `DataSource` (`store`, often in `forRootAsync`'s factory), or names a
+ * `@nestjs/typeorm` connection (`connectionName`) and the module builds the store from
+ * `getDataSourceToken(connectionName)` — never a hard-coded token. On init it registers the RBAC
+ * permission check into the Gate via the {@link PERMISSION_PROVIDER} seam, so
+ * `gate.allows('some.permission')` consults persisted permissions, and (by default) ensures the schema exists.
  */
 @Module({})
 export class AuthzRbacModule {
   static forRoot(options: AuthzRbacModuleOptions): DynamicModule {
+    const { connectionName, storeOptions, store, ...base } = options;
+    const optionsProvider: Provider =
+      connectionName === undefined
+        ? { provide: AUTHZ_RBAC_OPTIONS, useValue: { ...base, store } }
+        : {
+            provide: AUTHZ_RBAC_OPTIONS,
+            useFactory: (connection: never): ResolvedRbacOptions => ({
+              ...base,
+              store: new TypeOrmAuthzStore(connection, storeOptions),
+            }),
+            inject: [connectionToken(connectionName) as Type<unknown>],
+          };
     return {
       module: AuthzRbacModule,
       global: true,
-      providers: [
-        { provide: AUTHZ_RBAC_OPTIONS, useValue: options },
-        { provide: AUTHZ_RBAC_STORE, useValue: options.store },
-        ...AuthzRbacModule.commonProviders(),
-      ],
+      providers: [optionsProvider, ...AuthzRbacModule.commonProviders()],
       exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
 
   static forRootAsync(options: AuthzRbacModuleAsyncOptions): DynamicModule {
+    const inject = (options.inject ?? []) as Array<Type<unknown>>;
+    let optionsProvider: Provider;
+    if (options.connectionName === undefined) {
+      const { useFactory } = options;
+      optionsProvider = {
+        provide: AUTHZ_RBAC_OPTIONS,
+        useFactory: async (...args: unknown[]): Promise<ResolvedRbacOptions> => {
+          const resolved = await useFactory(...args);
+          if (resolved.connectionName !== undefined) {
+            throw new Error(
+              'AuthzRbacModule.forRootAsync: pass connectionName next to useFactory, not in the options it returns.',
+            );
+          }
+          const { store, connectionName: _c, storeOptions: _s, ...base } = resolved;
+          return { ...base, store };
+        },
+        inject,
+      };
+    } else {
+      const { useFactory, storeOptions } = options;
+      optionsProvider = {
+        provide: AUTHZ_RBAC_OPTIONS,
+        useFactory: async (
+          connection: never,
+          ...args: unknown[]
+        ): Promise<ResolvedRbacOptions> => ({
+          ...((await useFactory?.(...args)) ?? {}),
+          store: new TypeOrmAuthzStore(connection, storeOptions),
+        }),
+        inject: [connectionToken(options.connectionName) as Type<unknown>, ...inject],
+      };
+    }
     return {
       module: AuthzRbacModule,
       global: true,
       imports: (options.imports ?? []) as DynamicModule[],
-      providers: [
-        {
-          provide: AUTHZ_RBAC_OPTIONS,
-          useFactory: options.useFactory,
-          inject: (options.inject ?? []) as Array<Type<unknown>>,
-        },
-        {
-          provide: AUTHZ_RBAC_STORE,
-          useFactory: (opts: AuthzRbacModuleOptions) => opts.store,
-          inject: [AUTHZ_RBAC_OPTIONS],
-        },
-        ...AuthzRbacModule.commonProviders(),
-      ],
+      providers: [optionsProvider, ...AuthzRbacModule.commonProviders()],
       exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
@@ -253,6 +347,11 @@ export class AuthzRbacModule {
       { provide: PERMISSION_PROVIDER, useExisting: RbacPermissionProvider },
       RbacRoleProvider,
       { provide: ROLE_PROVIDER, useExisting: RbacRoleProvider },
+      {
+        provide: AUTHZ_RBAC_STORE,
+        useFactory: (opts: ResolvedRbacOptions) => opts.store,
+        inject: [AUTHZ_RBAC_OPTIONS],
+      },
       AuthzRbacBootstrap,
     ];
   }

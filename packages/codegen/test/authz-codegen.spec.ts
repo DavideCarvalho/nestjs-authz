@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { nestjsAuthzCodegen } from '../src/index.js';
 
 // A ts-morph project with one in-memory controller + policy, mirroring how the host hands the
-// extension a shared `ctx.project()`. The extension reads `@Can`/`@Policy` decorators off the AST.
+// extension a shared `ctx.project()`. The extension reads the `@Can`/`@Policy()`/`@PolicyFor` decorators off the AST.
 function projectWith(source: string, filePath = '/src/posts.controller.ts'): Project {
   const project = new Project({ useInMemoryFileSystem: true });
   project.createSourceFile(filePath, source);
@@ -28,21 +28,28 @@ function ctxWith(project: Project) {
 
 const CONTROLLER = `
 import { Controller, Post as HttpPost, Patch } from '@nestjs/common';
-import { Can } from '@dudousxd/nestjs-authz';
+import { Can } from '@nestjs/authorization';
+import { GatePolicy, PolicyFor, ability, byId } from '@dudousxd/nestjs-authz';
 class Post {}
+
+@PolicyFor(Post)
+export class PostPolicy {
+  update(user, post) { return true; }
+  create(user) { return true; }
+}
 
 @Controller('posts')
 export class PostsController {
   @Patch(':id')
-  @Can('update', Post)
+  @Can(PostPolicy, 'update', byId(Post))
   update() {}
 
   @HttpPost()
-  @Can('create', Post, { classLevel: true })
+  @Can(PostPolicy, 'create')
   create() {}
 
   @HttpPost(':id/publish')
-  @Can('access-admin')
+  @Can(GatePolicy, 'allows', ability('access-admin'))
   publish() {}
 }
 `;
@@ -155,14 +162,42 @@ describe('nestjsAuthzCodegen', () => {
     expect(ext.apiHeader?.(ctx)).toBeUndefined();
   });
 
-  it('discovers @Policy method names as class-level abilities when enabled', () => {
+  it('emits the abilities of an unlinked @Policy() class as model-less', () => {
     const ext = nestjsAuthzCodegen();
     const project = projectWith(
       `
-      import { Policy } from '@dudousxd/nestjs-authz';
-      class Post {}
-      @Policy(Post)
-      export class PostPolicy {
+      import { Policy } from '@nestjs/authorization';
+      @Policy()
+      export class InvoicePolicy {
+        send(user) { return true; }
+      }
+      @Controller('invoices')
+      export class InvoicesController {
+        @Get() @Can(InvoicePolicy, 'send') send() {}
+      }
+      `,
+      '/src/invoices.ts',
+    );
+    const ctx = ctxWith(project);
+    const routes = ext.transformRoutes?.(
+      [route('InvoicesController', 'send', '/src/invoices.ts')],
+      ctx,
+    ) as Array<never>;
+    const out = ext.apiHeader?.(ctx)?.statements?.join('\n') ?? '';
+    expect(out).toContain('export type AuthzAbility = "send";');
+    // No guessed "Invoice" key: the Gate resolves a resource only through @PolicyFor.
+    expect(out).toContain('export const authzAbilities = {} as const;');
+    expect(ext.apiMembers?.({ route: routes[0] } as never, ctx)?.can).toBe('() => can("send")');
+  });
+
+  it('discovers @PolicyFor method names as class-level abilities when enabled', () => {
+    const ext = nestjsAuthzCodegen();
+    const project = projectWith(
+      `
+      import { PolicyFor } from '@dudousxd/nestjs-authz';
+      class Article {}
+      @PolicyFor(Article)
+      export class ArticleRules {
         before() {}
         update() { return true; }
         publish() { return true; }
@@ -176,7 +211,60 @@ describe('nestjsAuthzCodegen', () => {
     // `before` is skipped (it's the policy hook, not an ability); update/publish are abilities.
     expect(out).toContain('export type AuthzAbility = "update" | "publish";');
     expect(out).toContain(
-      'export const authzAbilities = { "Post": ["update", "publish"] } as const;',
+      'export const authzAbilities = { "Article": ["update", "publish"] } as const;',
     );
+  });
+
+  it('reads the official @Can(Policy, ability, resolver) form and the sugar', () => {
+    const source = `
+import { Controller, Get } from '@nestjs/common';
+import { Can, Policy } from '@nestjs/authorization';
+import { GatePolicy, PermissionPolicy, PolicyFor, Roles, Permission, ability, byId, permission } from '@dudousxd/nestjs-authz';
+class Post {}
+class Comment {}
+
+@PolicyFor(Comment)
+export class CommentPolicy {
+  before() { return undefined; }
+  edit(user, comment) { return true; }
+  scope(user) { return true; }
+}
+
+@Policy()
+export class ReportPolicy {
+  export(user) { return true; }
+}
+
+@Controller('posts')
+export class PostsController {
+  @Get(':id') @Can(PostPolicy, 'update', byId(Post)) update() {}
+  @Get('c/:id') @Can(CommentPolicy, 'edit', (ctx) => [ctx]) edit() {}
+  @Get('r') @Can(ReportPolicy, 'export') report() {}
+  @Get('p') @Can(PermissionPolicy, 'has', permission('posts.publish', 'posts.delete')) publish() {}
+  @Get('q') @Permission('posts.archive') archive() {}
+  @Get('g') @Can(GatePolicy, 'allows', ability('access-admin')) admin() {}
+  @Get('roles') @Roles('admin') roles() {}
+}
+`;
+    const ext = nestjsAuthzCodegen();
+    const project = projectWith(source);
+    const ctx = ctxWith(project);
+    const methods = ['update', 'edit', 'report', 'publish', 'archive', 'admin', 'roles'];
+    const routes = ext.transformRoutes?.(
+      methods.map((m) => route('PostsController', m)),
+      ctx,
+    ) as Array<{ contract?: { contractSource?: { authz?: unknown } } }>;
+    const out = ext.apiHeader?.(ctx)?.statements?.join('\n') ?? '';
+    expect(out).toContain(
+      'export type AuthzAbility = "update" | "edit" | "export" | "posts.publish" | "posts.delete" | "posts.archive" | "access-admin";',
+    );
+    expect(out).toContain('"Post": ["update"]');
+    expect(out).toContain('"Comment": ["edit"]');
+    // ReportPolicy has no @PolicyFor link: the runtime resolves its abilities by name only.
+    expect(out).not.toContain('"Report"');
+    expect(routes[2]?.contract?.contractSource?.authz).toEqual({ ability: 'export' });
+    expect(out).not.toContain('"before"');
+    expect(out).not.toContain('"scope"');
+    expect(routes[6]?.contract?.contractSource?.authz).toBeUndefined();
   });
 });

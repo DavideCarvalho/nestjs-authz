@@ -1,4 +1,9 @@
 import {
+  AUTHORIZATION_MODULE_OPTIONS,
+  type AuthorizationModuleOptions,
+  defaultGetUser,
+} from '@nestjs/authorization';
+import {
   type DynamicModule,
   Inject,
   Injectable,
@@ -8,233 +13,208 @@ import {
   type Provider,
   type Type,
 } from '@nestjs/common';
-import { APP_GUARD, DiscoveryModule, DiscoveryService, ModuleRef } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR, DiscoveryModule } from '@nestjs/core';
+import { AuthzGuard, AuthzGuardStartupCheck } from './authz.guard.js';
 import { DEFAULT_CAN_ENDPOINT_PATH, createCanController } from './can-endpoint.controller.js';
-import { getPolicyResource } from './decorator/policy.decorator.js';
+import { AuthzDecisionPublisher } from './decisions.js';
 import { Gate } from './gate.js';
-import { CanGuard } from './guard/can.guard.js';
-import { RolesGuard } from './guard/roles.guard.js';
-import { PolicyRegistry } from './policy-registry.js';
+import { OFFICIAL_CAN_ANYONE_METADATA } from './official.js';
+import { GatePolicy } from './policies/gate.policy.js';
+import { PermissionPolicy } from './policies/permission.policy.js';
+import { RolePolicy } from './policies/role.policy.js';
+import { PolicyIndex } from './policy-index.js';
+import { AuthzRbac } from './rbac.js';
 import { IdParamResourceResolver, type ResourceResolver } from './resource-resolver.js';
+import { configureAuthzRuntime } from './runtime.js';
 import { AUTHZ_MODULE_OPTIONS, RESOURCE_HYDRATOR, RESOURCE_RESOLVER } from './tokens.js';
 import type {
   AuthzModuleAsyncOptions,
   AuthzModuleOptions,
   AuthzModuleOptionsFactory,
-  PolicyInstance,
+  AuthzModuleStaticOptions,
   ResourceLoaderMap,
 } from './types.js';
 
 /**
- * Populates the {@link PolicyRegistry} at boot from explicit `policies: []` and
- * auto-discovered `@Policy`-decorated providers.
- *
- * Explicit policies are read from the RESOLVED {@link AUTHZ_MODULE_OPTIONS} (so a
- * `forRootAsync` `useFactory`/`useClass` that returns `policies: [...]` registers
- * them too) and resolved as provider instances via {@link ModuleRef}.
+ * Hands the official `@Can()` argument resolvers and `AuthzPolicy` what they cannot
+ * inject: the resource resolver, the `superAdmin` hook, the external decision point,
+ * and the official `getUser`.
  */
 @Injectable()
-class AuthzPolicyBootstrap implements OnModuleInit {
+class AuthzRuntimeBootstrap implements OnModuleInit {
   constructor(
-    private readonly registry: PolicyRegistry,
-    private readonly discovery: DiscoveryService,
-    private readonly moduleRef: ModuleRef,
+    @Inject(RESOURCE_RESOLVER) private readonly resolver: ResourceResolver,
+    private readonly rbac: AuthzRbac,
     @Optional() @Inject(AUTHZ_MODULE_OPTIONS) private readonly options?: AuthzModuleOptions,
+    @Optional()
+    @Inject(AUTHORIZATION_MODULE_OPTIONS)
+    private readonly official?: AuthorizationModuleOptions,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    const seen = new Set<unknown>();
-
-    // 1. Explicit `policies: []` from resolved options (forRoot AND forRootAsync).
-    for (const PolicyClass of this.options?.policies ?? []) {
-      if (seen.has(PolicyClass)) continue;
-      const instance = await this.resolvePolicyInstance(PolicyClass);
-      if (instance) {
-        seen.add(PolicyClass);
-        this.registry.register(instance);
-      }
-    }
-
-    // 2. Auto-discovered @Policy-decorated providers.
-    for (const wrapper of this.discovery.getProviders()) {
-      const instance = wrapper.instance as PolicyInstance | undefined;
-      if (!instance || typeof instance !== 'object') continue;
-      const ctor = instance.constructor;
-      if (!ctor || seen.has(ctor)) continue;
-      if (getPolicyResource(instance)) {
-        seen.add(ctor);
-        this.registry.register(instance);
-      }
-    }
-  }
-
-  /**
-   * Resolve a policy class to an instance. Prefers an existing provider (so DI
-   * deps are honored); falls back to instantiating it through the container when
-   * the class was passed via `forRootAsync` options but not registered as a
-   * provider anywhere.
-   */
-  private async resolvePolicyInstance(
-    PolicyClass: Type<PolicyInstance>,
-  ): Promise<PolicyInstance | undefined> {
-    try {
-      return this.moduleRef.get<PolicyInstance>(PolicyClass, { strict: false });
-    } catch {
-      // not a registered provider — instantiate via the container.
-    }
-    try {
-      return await this.moduleRef.create<PolicyInstance>(PolicyClass);
-    } catch {
-      return undefined;
-    }
+  onModuleInit(): void {
+    configureAuthzRuntime({
+      resourceResolver: this.resolver,
+      superAdmin: this.options?.superAdmin,
+      decisionProvider: () => this.rbac.decisions(),
+      // Always set: an app without its own `getUser` must not keep a previous app's.
+      getUser: this.official?.getUser ?? defaultGetUser,
+    });
   }
 }
 
+/** The static options, which a `forRootAsync()` factory returning them would silently drop. */
+const STATIC_OPTIONS = ['unannotated', 'decorators'] as const;
+
+function checkFactoryOptions(options: AuthzModuleOptions): AuthzModuleOptions {
+  for (const key of STATIC_OPTIONS) {
+    if (options?.[key] !== undefined) {
+      throw new Error(
+        `AuthzModule: \`${key}\` is in the options the forRootAsync() factory returned. It goes at the top level of forRootAsync(), next to useFactory, because it decides what the module registers.`,
+      );
+    }
+  }
+  return options;
+}
+
+const EXPORTS = [
+  Gate,
+  AuthzGuard,
+  PolicyIndex,
+  AuthzRbac,
+  RolePolicy,
+  PermissionPolicy,
+  GatePolicy,
+  AUTHZ_MODULE_OPTIONS,
+  RESOURCE_RESOLVER,
+  RESOURCE_HYDRATOR,
+];
+
+/**
+ * The extras on top of `@nestjs/authorization`. Import it next to the official module:
+ *
+ * ```ts
+ * imports: [
+ *   AuthorizationModule.forRoot(),            // the official guard, @Can, AuthorizationService
+ *   AuthzModule.forRoot({ superAdmin: (u) => u?.isRoot === true }),
+ * ]
+ * ```
+ *
+ * Registers `RolePolicy`, `PermissionPolicy` and `GatePolicy` (official policies), the
+ * `Gate`, the resource resolver `byId()` uses, and the allow+deny decision event.
+ * It needs the official module to be global (its default).
+ */
 @Module({})
 export class AuthzModule {
   static forRoot(options: AuthzModuleOptions = {}): DynamicModule {
-    const policyProviders: Provider[] = (options.policies ?? []).map((P) => P as Provider);
     return {
       module: AuthzModule,
       global: true,
       imports: [DiscoveryModule],
-      controllers: AuthzModule.canControllers(options.canEndpoint),
+      controllers: AuthzModule.controllers(options),
       providers: [
         { provide: AUTHZ_MODULE_OPTIONS, useValue: options },
-        ...policyProviders,
-        PolicyRegistry,
-        Gate,
-        CanGuard,
-        { provide: APP_GUARD, useExisting: CanGuard },
-        RolesGuard,
-        { provide: APP_GUARD, useExisting: RolesGuard },
-        ...AuthzModule.resourceResolverProviders(),
-        ...AuthzModule.resourceHydratorProviders(),
-        ...AuthzModule.bootstrapProviders(),
+        ...AuthzModule.common(),
+        ...AuthzModule.guards(options),
       ],
-      exports: [
-        Gate,
-        PolicyRegistry,
-        CanGuard,
-        RolesGuard,
-        AUTHZ_MODULE_OPTIONS,
-        RESOURCE_RESOLVER,
-        RESOURCE_HYDRATOR,
-        ...(options.policies ?? []),
-      ],
+      exports: EXPORTS,
     };
   }
 
   static forRootAsync(options: AuthzModuleAsyncOptions): DynamicModule {
-    const asyncProvider = AuthzModule.buildAsyncOptionsProvider(options);
-    const asyncProviders = Array.isArray(asyncProvider) ? asyncProvider : [asyncProvider];
     return {
       module: AuthzModule,
       global: true,
       imports: [DiscoveryModule, ...((options.imports ?? []) as DynamicModule[])],
-      controllers: AuthzModule.canControllers(options.canEndpoint),
+      controllers: AuthzModule.controllers(options),
       providers: [
-        ...asyncProviders,
-        PolicyRegistry,
-        Gate,
-        CanGuard,
-        { provide: APP_GUARD, useExisting: CanGuard },
-        RolesGuard,
-        { provide: APP_GUARD, useExisting: RolesGuard },
-        ...AuthzModule.resourceResolverProviders(),
-        ...AuthzModule.resourceHydratorProviders(),
-        ...AuthzModule.bootstrapProviders(),
+        ...AuthzModule.asyncOptionsProviders(options),
+        ...AuthzModule.common(),
+        ...AuthzModule.guards(options),
       ],
-      exports: [
-        Gate,
-        PolicyRegistry,
-        CanGuard,
-        RolesGuard,
-        AUTHZ_MODULE_OPTIONS,
-        RESOURCE_RESOLVER,
-        RESOURCE_HYDRATOR,
-      ],
+      exports: EXPORTS,
     };
   }
 
-  /**
-   * Register a default {@link ResourceResolver} bound to {@link RESOURCE_RESOLVER}
-   * so `@Can('update', Post)` works out-of-the-box on a clean install (no manual
-   * resolver wiring needed). Reads the resolved options so a `resourceResolver`
-   * override / `idParam` knob from forRoot OR forRootAsync is honored.
-   */
-  private static resourceResolverProviders(): Provider[] {
+  private static common(): Provider[] {
     return [
+      PolicyIndex,
+      AuthzRbac,
+      Gate,
+      RolePolicy,
+      PermissionPolicy,
+      GatePolicy,
       {
         provide: RESOURCE_RESOLVER,
         useFactory: (options?: AuthzModuleOptions): ResourceResolver =>
           options?.resourceResolver ?? new IdParamResourceResolver(options?.idParam),
         inject: [{ token: AUTHZ_MODULE_OPTIONS, optional: true }],
       },
-    ];
-  }
-
-  /**
-   * Bind the {@link RESOURCE_HYDRATOR} token to the resolved options'
-   * `resourceLoaders` map so the opt-in `POST /authz/can` endpoint can rehydrate a
-   * `{ type, id }` shim into the REAL entity before authorizing. Reads the resolved
-   * options so the map from forRoot OR a forRootAsync factory is honored. Resolves to
-   * `undefined` when no `resourceLoaders` are configured (endpoint behavior unchanged).
-   */
-  private static resourceHydratorProviders(): Provider[] {
-    return [
       {
         provide: RESOURCE_HYDRATOR,
         useFactory: (options?: AuthzModuleOptions): ResourceLoaderMap | undefined =>
           options?.resourceLoaders,
         inject: [{ token: AUTHZ_MODULE_OPTIONS, optional: true }],
       },
+      AuthzGuard,
+      AuthzRuntimeBootstrap,
+      AuthzDecisionPublisher,
+      { provide: APP_INTERCEPTOR, useExisting: AuthzDecisionPublisher },
     ];
   }
 
   /**
-   * Provider that populates the {@link PolicyRegistry} on init (explicit policies
-   * + auto-discovered `@Policy` providers). Registered for both forRoot/forRootAsync.
+   * `unannotated: 'allow'`: the migration guard, registered globally, and the check that the
+   * official global guard is off. Static, so it is read from `forRoot()` / the top level of
+   * `forRootAsync()`, never from the factory.
    */
-  private static bootstrapProviders(): Provider[] {
-    return [AuthzPolicyBootstrap];
+  private static guards(options: AuthzModuleStaticOptions): Provider[] {
+    const mode = options.unannotated ?? 'deny';
+    if (mode !== 'allow' && mode !== 'deny') {
+      throw new Error(
+        `AuthzModule: \`unannotated\` must be 'allow' or 'deny', got ${String(mode)}.`,
+      );
+    }
+    if (mode === 'deny') return [];
+    return [AuthzGuardStartupCheck, { provide: APP_GUARD, useExisting: AuthzGuard }];
   }
 
   /**
-   * Build the opt-in `POST /authz/can` fallback controller (or none). Off by
-   * default; `true` mounts at the default path, a string mounts at that path.
+   * The controllers this module mounts, each a fresh class (so `decorators` never leak between
+   * registrations), open to the official guard, then decorated with `decorators`.
    */
-  private static canControllers(canEndpoint: boolean | string | undefined): Type<unknown>[] {
+  private static controllers(options: AuthzModuleStaticOptions): Type<unknown>[] {
+    const { canEndpoint, decorators = [] } = options;
     if (!canEndpoint) return [];
     const path = typeof canEndpoint === 'string' ? canEndpoint : DEFAULT_CAN_ENDPOINT_PATH;
-    return [createCanController(path)];
+    const controller = createCanController(path);
+    Reflect.defineMetadata(OFFICIAL_CAN_ANYONE_METADATA, true, controller);
+    // Applied in order, after the module's own, like a stack written above the class.
+    for (const decorate of [...decorators].reverse()) {
+      decorate(controller);
+    }
+    return [controller];
   }
 
-  private static buildAsyncOptionsProvider(
-    options: AuthzModuleAsyncOptions,
-  ): Provider | Provider[] {
-    if (options.useFactory) {
-      return {
-        provide: AUTHZ_MODULE_OPTIONS,
-        useFactory: options.useFactory,
-        inject: (options.inject ?? []) as Array<Type<unknown>>,
-      };
-    }
-    if (options.useClass) {
+  private static asyncOptionsProviders(options: AuthzModuleAsyncOptions): Provider[] {
+    const { useFactory } = options;
+    if (useFactory) {
       return [
-        { provide: options.useClass, useClass: options.useClass },
         {
           provide: AUTHZ_MODULE_OPTIONS,
-          useFactory: async (factory: AuthzModuleOptionsFactory) => factory.createAuthzOptions(),
-          inject: [options.useClass],
+          useFactory: async (...args: unknown[]) => checkFactoryOptions(await useFactory(...args)),
+          inject: (options.inject ?? []) as Array<Type<unknown>>,
         },
       ];
     }
-    const factoryClass = options.useExisting as Type<AuthzModuleOptionsFactory>;
-    return {
-      provide: AUTHZ_MODULE_OPTIONS,
-      useFactory: async (factory: AuthzModuleOptionsFactory) => factory.createAuthzOptions(),
-      inject: [factoryClass],
-    };
+    const factory = (options.useClass ?? options.useExisting) as Type<AuthzModuleOptionsFactory>;
+    return [
+      ...(options.useClass ? [{ provide: options.useClass, useClass: options.useClass }] : []),
+      {
+        provide: AUTHZ_MODULE_OPTIONS,
+        useFactory: async (f: AuthzModuleOptionsFactory) =>
+          checkFactoryOptions(await f.createAuthzOptions()),
+        inject: [factory],
+      },
+    ];
   }
 }

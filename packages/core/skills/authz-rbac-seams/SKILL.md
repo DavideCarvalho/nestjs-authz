@@ -3,10 +3,11 @@ name: authz-rbac-seams
 description: >
   Add persisted roles & permissions to @dudousxd/nestjs-authz through its optional,
   grant-only seams. PERMISSION_PROVIDER (a PermissionProvider with hasPermission and an
-  optional getPermissions) is the Laravel/spatie Gate::before grant — when the user holds
-  a named permission the ability is allowed regardless of policies; getPermissions enables
+  optional getPermissions) grants named abilities no policy defines (posts.publish) — it never
+  bypasses a policy that defines the ability (the policy has the final word; only superAdmin
+  short-circuits it); getPermissions enables
   segment wildcard matching (granted posts.* satisfies posts.update, * satisfies anything).
-  ROLE_PROVIDER (a RoleProvider.getRoles) feeds coarse checks gate.hasRole / @Roles, unioned
+  ROLE_PROVIDER (a RoleProvider.getRoles) feeds coarse checks gate.hasRole / @Roles (RolePolicy), unioned
   with the user-object defaultRoleResolver (reads user.roles / user.role). Both tokens are
   capability symbols the ORM adapters (@dudousxd/nestjs-authz-typeorm / -prisma / -mikro-orm / -drizzle)
   register via AuthzRbacModule; seams are grant-only — a false result never DENIES, it falls
@@ -14,7 +15,7 @@ description: >
 metadata:
   type: core
   library: "@dudousxd/nestjs-authz"
-  library_version: "0.6.3"
+  library_version: "0.9.0"
   framework: nestjs
 ---
 
@@ -23,7 +24,8 @@ metadata:
 The core stays zero-DB. Persisted roles/permissions plug in through two **optional,
 grant-only** seams the Gate consults via `@Optional()` capability tokens:
 
-- `PERMISSION_PROVIDER` → a `PermissionProvider` (the Laravel/spatie `Gate::before` grant).
+- `PERMISSION_PROVIDER` → a `PermissionProvider` (feeds `PermissionPolicy` / `@Permission` and
+  the `Gate`'s named abilities that no policy defines).
 - `ROLE_PROVIDER` → a `RoleProvider` (feeds `gate.hasRole` / `@Roles`).
 
 When neither is registered, the Gate behaves exactly as before. **Grant-only** means a
@@ -32,11 +34,13 @@ provider returning `false`/nullish never DENIES — it falls through to normal r
 ## Setup
 
 The simplest path is an ORM adapter's `AuthzRbacModule`, which builds a store and
-registers both seams. Example with the Prisma adapter (the TypeORM and MikroORM siblings
-have an identical `AuthzRbacModule` surface):
+registers both seams. Example with the Prisma adapter (which takes `store` or `client`;
+MikroORM takes `store`; the TypeORM and Drizzle siblings also accept `connectionName` /
+`storeOptions` to build the store from the official connection instead of a prebuilt `store`):
 
 ```ts
 import { Module } from '@nestjs/common';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { AuthzModule } from '@dudousxd/nestjs-authz';
 import { AuthzRbacModule } from '@dudousxd/nestjs-authz-prisma';
 import { PrismaClient } from '@prisma/client';
@@ -45,7 +49,8 @@ const prisma = new PrismaClient();
 
 @Module({
   imports: [
-    AuthzModule.forRoot({ policies: [PostPolicy] }),
+    AuthorizationModule.forRoot(),
+    AuthzModule.forRoot(),
     AuthzRbacModule.forRoot({ client: prisma }), // builds the store, registers the seams
   ],
 })
@@ -61,6 +66,17 @@ await store.assignRole({ type: 'user', id: 7 }, 'editor');
 await gate.forUser(user).allows('posts.publish'); // true via PERMISSION_PROVIDER
 await gate.forUser(user).hasRole('editor');        // true via ROLE_PROVIDER
 ```
+
+On routes, the same seams answer through the official guard as the core's official policies:
+
+```ts
+@Permission('posts.publish')                                 // = @Can(PermissionPolicy, 'has', permission('posts.publish'))
+@Roles('editor')                                             // = @Can(RolePolicy, 'has', roles('editor'))
+@Can(PermissionPolicy, 'hasAll', permission('posts.publish', 'posts.delete'))
+```
+
+Both extend `AuthzPolicy`, so `superAdmin` grants them; `gate.hasRole()` is a plain fact and
+ignores it.
 
 Admin-UI management lives on every adapter's store too (same semantics everywhere):
 `syncRolePermissions(role, names)` replaces a role's permission set, `getRolePermissions(roles)`
@@ -136,10 +152,11 @@ hasPermission(user: User, permission: string) {
 }
 ```
 
-Mechanism: the provider grant mirrors `Gate::before` — `true` short-circuits to allow;
-`false`/`undefined` falls through to policy/gate resolution and never denies.
-Source: `packages/core/src/permission-provider.ts` (grant semantics),
-`packages/core/src/gate.ts` (`permissionProviderGrants`, `resolveBase`).
+Mechanism: the provider only grants — `false`/`undefined` falls through to the ad-hoc gate and
+never denies. It is asked after the policy: a string ability a linked policy defines is the
+policy's to decide, whatever the user's permissions; only `superAdmin` (and a
+`DECISION_PROVIDER`) come first. Source: `packages/core/src/permission-provider.ts` (grant
+semantics), `packages/core/src/rbac.ts` (`grants`), `packages/core/src/gate.ts` (`decideString`).
 
 ### 2. Re-implementing wildcard matching in your adapter
 

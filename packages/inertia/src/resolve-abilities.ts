@@ -1,5 +1,6 @@
-import type { Gate, PolicyRegistry, Resource } from '@dudousxd/nestjs-authz';
+import type { BoundGate, Gate, PolicyIndex } from '@dudousxd/nestjs-authz';
 import type { CanMap } from '@dudousxd/nestjs-authz-client';
+import type { Type } from '@nestjs/common';
 
 /**
  * A flat record of `ability -> verdict`, e.g. `{ 'posts.create': true }`.
@@ -9,10 +10,10 @@ import type { CanMap } from '@dudousxd/nestjs-authz-client';
 export type { CanMap };
 
 /**
- * How an ability name is built from a policy's resource class + method name when
- * enumerating class-level policy abilities. Default: `"<ResourceName>.<method>"`
- * lower-cased on the resource (e.g. `Post` + `create` → `posts.create`... no — see
- * below). Kept overridable so an app can match the naming its `@Can` decorators use.
+ * How an ability key is built from a policy's resource name and method name when
+ * listing class-level abilities. The resource name is the class linked with
+ * `@PolicyFor(Resource)`, else the policy class name without `Policy` (`PostPolicy` →
+ * `Post`).
  */
 export type AbilityNamer = (resourceName: string, method: string) => string;
 
@@ -44,43 +45,40 @@ export interface ResolveAbilitiesOptions {
 }
 
 /**
- * Resolve the current user's CLASS-LEVEL abilities into a flat `{ ability: boolean }`
- * map, with NO per-request HTTP round-trip — each entry is a direct `gate.allows`
- * call against the in-process Gate.
+ * Resolve a user's CLASS-LEVEL abilities into a flat `{ ability: boolean }` map, with no
+ * HTTP round-trip. Pass `gate.forUser(user)`; a bare `Gate` checks its ambient user.
  *
  * Sources, in order:
- *  1. Ad-hoc gates registered via `gate.define(...)` (model-less, e.g. `access-admin`).
- *  2. Class-level `@Policy` methods (those taking no resource instance — heuristically
- *     arity `<= 1`, e.g. `create(user)`/`viewAny(user)`), dispatched against the resource
- *     CLASS so no instance is loaded. Instance methods like `update(user, post)` are NOT
- *     enumerated (see {@link PolicyRegistry.classAbilities}) — dispatching them against the
- *     class would write a bogus class-level verdict.
+ *  1. Ad-hoc gates registered with `gate.define(...)`.
+ *  2. The abilities of every official `@Policy()` that take no argument after the user
+ *     (`create(user)`, `viewAny(user)`), checked through the official
+ *     `AuthorizationService` (so each policy's `before()` applies). Abilities that take a
+ *     record (`update(user, post)`) are per-instance: share them with `authorizeResource`.
  *  3. Any extra `options.abilities` names.
- *
- * Gates are checked by name; policy methods are checked by passing the resource
- * class as the dispatch target (Gate resolves the class-level policy method).
  */
 export async function resolveClassAbilities(
-  gate: Gate,
-  policies: PolicyRegistry,
+  gate: Gate | BoundGate,
+  policies: PolicyIndex,
   options: ResolveAbilitiesOptions = {},
 ): Promise<CanMap> {
   const namer = options.abilityNamer ?? defaultAbilityNamer;
   const out: CanMap = {};
-
-  // 1. Ad-hoc gates (model-less). Resolve by ability name only.
-  const gateNames = new Set<string>([...gate.gateNames(), ...(options.abilities ?? [])]);
-  for (const ability of gateNames) {
-    out[ability] = await safeAllows(gate, ability);
+  const names = new Set<string>([...gateNamesOf(gate), ...(options.abilities ?? [])]);
+  for (const ability of names) {
+    out[ability] = await safely(() => gate.allows(ability));
   }
 
-  // 2. Class-level policy methods, dispatched against the resource CLASS.
-  for (const { resource, abilities } of policies.classAbilities()) {
-    const resourceName = (resource as { name?: string }).name ?? 'Resource';
+  for (const { policy, resource, abilities } of policies.classAbilities()) {
+    const resourceName = resource?.name ?? policy.name.replace(/Policy$/, '');
     for (const method of abilities) {
       const key = namer(resourceName, method);
-      // Gate.allows accepts a Type (class) as the resource for class-level abilities.
-      out[key] = await safeAllows(gate, method, resource as unknown as Resource);
+      out[key] = await safely(() =>
+        (gate.allows as (p: Type<unknown>, a: string) => Promise<boolean>).call(
+          gate,
+          policy,
+          method,
+        ),
+      );
       if (options.includeBareMethodNames && out[method] === undefined) {
         out[method] = out[key];
       }
@@ -90,13 +88,16 @@ export async function resolveClassAbilities(
   return out;
 }
 
-/**
- * `gate.allows` may throw (unresolved/ambiguous ability). For prop sharing we
- * fail closed (deny) rather than crash the render.
- */
-async function safeAllows(gate: Gate, ability: string, resource?: Resource): Promise<boolean> {
+/** The ad-hoc gate names, from a `Gate` or the `Gate` behind a `BoundGate`. */
+function gateNamesOf(gate: Gate | BoundGate): string[] {
+  const owner = (gate as unknown as { gate?: Gate }).gate ?? (gate as Gate);
+  return typeof owner.gateNames === 'function' ? owner.gateNames() : [];
+}
+
+/** A check that throws (unresolved ability, unregistered policy) shares `false`. */
+async function safely(check: () => Promise<boolean>): Promise<boolean> {
   try {
-    return await gate.allows(ability, resource);
+    return await check();
   } catch {
     return false;
   }

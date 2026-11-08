@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import {
   CONTEXT_ACCESSOR,
   PERMISSION_PROVIDER,
@@ -17,7 +18,8 @@ import {
   type Type,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import type { DrizzleAuthzStore } from './drizzle-authz.store.js';
+import { DrizzleAuthzStore } from './drizzle-authz.store.js';
+import type { AuthzStoreOptions } from './types.js';
 
 /** Injection token holding the {@link DrizzleAuthzStore} the RBAC module manages. */
 export const AUTHZ_RBAC_STORE = Symbol.for('@dudousxd/nestjs-authz-drizzle:store');
@@ -30,9 +32,7 @@ export const AUTHZ_RBAC_OPTIONS = Symbol.for('@dudousxd/nestjs-authz-drizzle:opt
  */
 export type UserRefMapper = (user: unknown) => UserRef | undefined;
 
-export interface AuthzRbacModuleOptions {
-  /** The Drizzle RBAC store (built with the app-provided Drizzle database). */
-  store: DrizzleAuthzStore;
+export interface AuthzRbacModuleBaseOptions {
   /**
    * Run the store's `ensureSchema` (`CREATE ... IF NOT EXISTS`, non-destructive) on bootstrap.
    * Default `false`: with Drizzle the schema is normally owned by drizzle-kit — spread the
@@ -46,10 +46,75 @@ export interface AuthzRbacModuleOptions {
   userRefFrom?: UserRefMapper;
 }
 
-export interface AuthzRbacModuleAsyncOptions {
-  imports?: unknown[];
-  inject?: unknown[];
-  useFactory: (...args: unknown[]) => Promise<AuthzRbacModuleOptions> | AuthzRbacModuleOptions;
+/**
+ * Where the store comes from: build it yourself (`store`), or name a Drizzle connection
+ * registered with NestJS's `@nestjs/drizzle` (`connectionName`, `'default'` for the default one) and
+ * the module builds the store from `getDrizzleToken(connectionName)`, with `storeOptions`.
+ */
+export type AuthzRbacModuleOptions = AuthzRbacModuleBaseOptions &
+  (
+    | {
+        /** The RBAC store, built with the app-provided Drizzle connection. */
+        store: DrizzleAuthzStore;
+        connectionName?: never;
+        storeOptions?: never;
+      }
+    | {
+        /** The `@nestjs/drizzle` connection to build the store from (`'default'` for the default one). */
+        connectionName: string;
+        /** Options for the store built from `connectionName` (table names, schema). */
+        storeOptions?: AuthzStoreOptions;
+        store?: never;
+      }
+  );
+
+/** {@link AuthzRbacModuleOptions} once the store is resolved — what the providers read. */
+type ResolvedRbacOptions = AuthzRbacModuleBaseOptions & { store: DrizzleAuthzStore };
+
+export type AuthzRbacModuleAsyncOptions =
+  | {
+      imports?: unknown[];
+      inject?: unknown[];
+      useFactory: (...args: unknown[]) => Promise<AuthzRbacModuleOptions> | AuthzRbacModuleOptions;
+      connectionName?: never;
+      storeOptions?: never;
+    }
+  | {
+      /** Build the store from this `@nestjs/drizzle` connection; the factory returns the other options. */
+      connectionName: string;
+      storeOptions?: AuthzStoreOptions;
+      imports?: unknown[];
+      inject?: unknown[];
+      useFactory?: (
+        ...args: unknown[]
+      ) => Promise<AuthzRbacModuleBaseOptions> | AuthzRbacModuleBaseOptions;
+    };
+
+const requirePeer = createRequire(import.meta.url);
+
+/**
+ * The injection token `@nestjs/drizzle` registers the connection `name` under, from its own
+ * `getDrizzleToken()`. An optional peer, loaded only for `connectionName`.
+ */
+function connectionToken(name: string): unknown {
+  let official: { getDrizzleToken(name?: string): unknown };
+  try {
+    official = requirePeer('@nestjs/drizzle');
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    const message = String((error as { message?: unknown }).message ?? '');
+    if (
+      (code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND') &&
+      message.includes("'@nestjs/drizzle'")
+    ) {
+      throw new Error(
+        'AuthzRbacModule: connectionName needs @nestjs/drizzle, which is not installed. ' +
+          'Install it, or build the store yourself and pass `store`.',
+      );
+    }
+    throw error;
+  }
+  return official.getDrizzleToken(name);
 }
 
 /**
@@ -124,7 +189,7 @@ class RbacPermissionProvider implements PermissionProvider {
   };
 
   constructor(
-    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: ResolvedRbacOptions,
     @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
@@ -172,7 +237,7 @@ class RbacRoleProvider implements RoleProvider {
   };
 
   constructor(
-    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: ResolvedRbacOptions,
     @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
@@ -194,7 +259,7 @@ class RbacRoleProvider implements RoleProvider {
 @Injectable()
 class AuthzRbacBootstrap implements OnModuleInit {
   constructor(
-    @Optional() @Inject(AUTHZ_RBAC_OPTIONS) private readonly options?: AuthzRbacModuleOptions,
+    @Optional() @Inject(AUTHZ_RBAC_OPTIONS) private readonly options?: ResolvedRbacOptions,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -205,45 +270,74 @@ class AuthzRbacBootstrap implements OnModuleInit {
 }
 
 /**
- * Wires persisted RBAC into the core authz Gate. The app provides the Drizzle `db`
- * (via `inject`/`useFactory`) and constructs the {@link DrizzleAuthzStore} — this module
- * NEVER hardcodes a connection token. On init it registers the RBAC permission check into
- * the Gate via the {@link PERMISSION_PROVIDER} seam, so `gate.allows('some.permission')`
- * consults persisted permissions, and (with `autoCreateSchema: true`) ensures the schema exists.
+ * Wires persisted RBAC into the core authz Gate. Either the app builds the
+ * {@link DrizzleAuthzStore} from its Drizzle `db` (`store`, often in `forRootAsync`'s factory), or names a
+ * `@nestjs/drizzle` connection (`connectionName`) and the module builds the store from
+ * `getDrizzleToken(connectionName)` — never a hard-coded token. On init it registers the RBAC
+ * permission check into the Gate via the {@link PERMISSION_PROVIDER} seam, so
+ * `gate.allows('some.permission')` consults persisted permissions, and (with `autoCreateSchema: true`) ensures the schema exists.
  */
 @Module({})
 export class AuthzRbacModule {
   static forRoot(options: AuthzRbacModuleOptions): DynamicModule {
+    const { connectionName, storeOptions, store, ...base } = options;
+    const optionsProvider: Provider =
+      connectionName === undefined
+        ? { provide: AUTHZ_RBAC_OPTIONS, useValue: { ...base, store } }
+        : {
+            provide: AUTHZ_RBAC_OPTIONS,
+            useFactory: (connection: never): ResolvedRbacOptions => ({
+              ...base,
+              store: new DrizzleAuthzStore(connection, storeOptions),
+            }),
+            inject: [connectionToken(connectionName) as Type<unknown>],
+          };
     return {
       module: AuthzRbacModule,
       global: true,
-      providers: [
-        { provide: AUTHZ_RBAC_OPTIONS, useValue: options },
-        { provide: AUTHZ_RBAC_STORE, useValue: options.store },
-        ...AuthzRbacModule.commonProviders(),
-      ],
+      providers: [optionsProvider, ...AuthzRbacModule.commonProviders()],
       exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
 
   static forRootAsync(options: AuthzRbacModuleAsyncOptions): DynamicModule {
+    const inject = (options.inject ?? []) as Array<Type<unknown>>;
+    let optionsProvider: Provider;
+    if (options.connectionName === undefined) {
+      const { useFactory } = options;
+      optionsProvider = {
+        provide: AUTHZ_RBAC_OPTIONS,
+        useFactory: async (...args: unknown[]): Promise<ResolvedRbacOptions> => {
+          const resolved = await useFactory(...args);
+          if (resolved.connectionName !== undefined) {
+            throw new Error(
+              'AuthzRbacModule.forRootAsync: pass connectionName next to useFactory, not in the options it returns.',
+            );
+          }
+          const { store, connectionName: _c, storeOptions: _s, ...base } = resolved;
+          return { ...base, store };
+        },
+        inject,
+      };
+    } else {
+      const { useFactory, storeOptions } = options;
+      optionsProvider = {
+        provide: AUTHZ_RBAC_OPTIONS,
+        useFactory: async (
+          connection: never,
+          ...args: unknown[]
+        ): Promise<ResolvedRbacOptions> => ({
+          ...((await useFactory?.(...args)) ?? {}),
+          store: new DrizzleAuthzStore(connection, storeOptions),
+        }),
+        inject: [connectionToken(options.connectionName) as Type<unknown>, ...inject],
+      };
+    }
     return {
       module: AuthzRbacModule,
       global: true,
       imports: (options.imports ?? []) as DynamicModule[],
-      providers: [
-        {
-          provide: AUTHZ_RBAC_OPTIONS,
-          useFactory: options.useFactory,
-          inject: (options.inject ?? []) as Array<Type<unknown>>,
-        },
-        {
-          provide: AUTHZ_RBAC_STORE,
-          useFactory: (opts: AuthzRbacModuleOptions) => opts.store,
-          inject: [AUTHZ_RBAC_OPTIONS],
-        },
-        ...AuthzRbacModule.commonProviders(),
-      ],
+      providers: [optionsProvider, ...AuthzRbacModule.commonProviders()],
       exports: [AUTHZ_RBAC_STORE, PERMISSION_PROVIDER, ROLE_PROVIDER],
     };
   }
@@ -254,6 +348,11 @@ export class AuthzRbacModule {
       { provide: PERMISSION_PROVIDER, useExisting: RbacPermissionProvider },
       RbacRoleProvider,
       { provide: ROLE_PROVIDER, useExisting: RbacRoleProvider },
+      {
+        provide: AUTHZ_RBAC_STORE,
+        useFactory: (opts: ResolvedRbacOptions) => opts.store,
+        inject: [AUTHZ_RBAC_OPTIONS],
+      },
       AuthzRbacBootstrap,
     ];
   }

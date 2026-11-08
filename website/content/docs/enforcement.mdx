@@ -1,188 +1,139 @@
 ---
 title: Enforcement
-description: Declarative authorization with @Can and the CanGuard, role checks with @Roles and the RolesGuard, and the optional can-endpoint controller.
+description: Routes are guarded by the official deny-by-default AuthorizationGuard. This page covers our helpers for the official @Can, the @Roles / @Permission sugar, the decision channel and the optional can-endpoint.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-You've written [policies](/docs/authz/policies) and [gates](/docs/authz/gates) — the *rules*. **Enforcement** is how you apply them at the edge of your app: declaratively on routes with decorators, so authorization is visible right next to the handler it protects.
+Route enforcement is the official package's: `AuthorizationModule.forRoot()` installs a global
+`AuthorizationGuard` that runs every `@Can(Policy, 'ability', args?)` on a handler and its class.
+See the [official docs](https://docs.nestjs.com/security/authorization). What it implies:
 
-`AuthzModule.forRoot()` registers two guards as `APP_GUARD` for you — the `CanGuard` and the `RolesGuard` — so the decorators below work with no extra wiring. Both guards are **inert on un-annotated routes**: a handler without `@Can` or `@Roles` is never blocked.
+- **Deny by default.** A handler with no `@Can()`, `@Can.Anyone()` or `@Public()` (from
+  `@nestjs/authentication`) is denied.
+- **Requirements add up.** Class-level and method-level `@Can()` all apply; `@Can.Anyone()` or
+  `@Public()` on a method drops the class's.
+- **Guests reach policies as `null`**, and a guest denial is a 401; a signed-in one is a 403.
 
-## `@Can` and the `CanGuard`
+This package adds what goes inside the official `@Can()`, and a migration mode that defers deny
+by default.
 
-`@Can(ability, Resource?)` declares the ability a route requires. The `CanGuard` reads it, resolves the resource, and delegates to `Gate.authorize` — which throws `ForbiddenException` (HTTP 403) on denial.
+## Unannotated routes: `unannotated: 'allow'`
 
 ```ts
-import { Controller, Get, Patch, Delete, Param } from '@nestjs/common';
-import { Can } from '@dudousxd/nestjs-authz';
-import { Post } from './post.entity.js';
-
-@Controller('posts')
-export class PostsController {
-  @Get(':id')
-  @Can('view', Post) // resolves Post by :id, runs PostPolicy.view(currentUser, post)
-  show(@Param('id') id: string) {}
-
-  @Patch(':id')
-  @Can('update', Post)
-  update(@Param('id') id: string) {}
-
-  @Delete(':id')
-  @Can('delete', Post)
-  remove(@Param('id') id: string) {}
-}
+AuthorizationModule.forRoot({ globalGuard: false }),
+AuthzModule.forRoot({ unannotated: 'allow' }),   // forRootAsync({ unannotated, useFactory })
 ```
 
-For an instance ability, the guard:
-
-1. Reads the `@Can` metadata (`ability` + `resource` class).
-2. Resolves an instance via the registered [`ResourceResolver`](/docs/authz/resource-resolution) — by default, loading by the route `:id`.
-3. Calls `gate.authorize(ability, instance)`, which runs the matching policy method.
+`AuthzModule` then registers a global `AuthzGuard` in place of the official one. A route with
+`@Can()` requirements is handed to the official `AuthorizationGuard`: same `getUser`, same
+evaluation, same 401/403 and `denied` event, `Can.Anyone()` and `@Public()` respected. A route
+with none is let through. The default, `'deny'`, registers nothing. `AuthzGuard` is exported, for
+`@UseGuards(AuthzGuard)` on part of an app.
 
 <Callout type="warn">
-If the resolver returns `undefined` (the resource wasn't found), the guard **denies** with `ForbiddenException` rather than calling your policy with a bogus resource. If no resolver is registered at all for an instance ability, it throws `ResourceResolverMissingException`. The default `IdParamResourceResolver` is registered automatically, so a clean install already has one — see [Resource resolution](/docs/authz/resource-resolution).
+The app fails to start when `unannotated: 'allow'` is on and the official global guard too: the
+official guard would still deny the unannotated routes, so the option would do nothing. Pass
+`globalGuard: false`. `unannotated` decides what the module registers, so under `forRootAsync` it
+goes next to `useFactory`; a factory that returns it fails the startup. See the
+[step-by-step migration](/docs/authz#migrating-one-controller-at-a-time-unannotated-allow).
 </Callout>
 
-### Class-level abilities
+## Argument helpers
 
-Some abilities — `create`, `viewAny` — have no instance to load. Pass `{ classLevel: true }` so the guard **skips resource resolution** and dispatches against the resource *class*:
-
-```ts
-@Post()
-@Can('create', Post, { classLevel: true }) // runs PostPolicy.create(currentUser) — no instance loaded
-create() {}
-```
-
-`CanOptions` currently has one field:
+The third argument of the official `@Can()` is a resolver `(context) => args`. Ours:
 
 ```ts
-interface CanOptions {
-  classLevel?: boolean; // skip resource loading; dispatch against the resource class
-}
+import { Can } from '@nestjs/authorization';
+import { ability, byId, permission, roles, staticCanArgs } from '@dudousxd/nestjs-authz';
+
+@Can(PostPolicy, 'update', byId(Post))                        // the Post named by :id (403 if not found)
+@Can(PostPolicy, 'update', byId(Post, { param: 'postId' }))
+@Can(RolePolicy, 'has', roles('admin', 'editor'))             // any of
+@Can(PermissionPolicy, 'hasAll', permission('posts.publish', 'posts.delete'))
+@Can(GatePolicy, 'allows', ability('access-admin'))           // a gate.define() gate
+@Can(FeaturePolicy, 'enabled', staticCanArgs('billing'))      // any constant args
 ```
 
-### Model-less gates
+`roles()`, `permission()`, `ability()` and `staticCanArgs()` return resolvers whose arguments do
+not depend on the call. They carry them on a non-enumerable
+`Symbol.for('@dudousxd/static-can-args')` property (`STATIC_CAN_ARGS`, read with
+`getStaticCanArgs()`), so tools such as the Aviary agent can evaluate a requirement without a
+request. See [Resource resolution](/docs/authz/resource-resolution) for `byId`.
 
-`@Can` with **no resource class** dispatches to an ad-hoc [gate](/docs/authz/gates) by name — no instance, no policy:
+## `@Roles` and `@Permission`
+
+Sugar that writes official `@Can` metadata, nothing else:
 
 ```ts
-@Get('admin')
-@Can('access-admin') // runs the gate registered via gate.define('access-admin', ...)
-dashboard() {}
+@Roles('admin', 'editor')        // = @Can(RolePolicy, 'has', roles('admin', 'editor'))
+@Permission('posts.publish')     // = @Can(PermissionPolicy, 'has', permission('posts.publish'))
 ```
 
-### `@Can` at the class level
+Both work on methods and classes. Roles come from the user object (`user.roles` / `user.role`,
+or `resolveRoles`) and from an [RBAC adapter](/docs/authz/rbac); permissions from the adapter.
 
-Because `@Can` is both a method and class decorator, you can guard an entire controller. The guard reads metadata with `getAllAndOverride`, so a method-level `@Can` **overrides** a class-level one:
+## Reading the requirements
 
 ```ts
-@Controller('admin')
-@Can('access-admin') // applies to every route in this controller…
-export class AdminController {
-  @Get('reports')
-  reports() {}
+import { routeRequirements } from '@dudousxd/nestjs-authz';
 
-  @Get('billing')
-  @Can('access-billing') // …except this one, which requires a different ability
-  billing() {}
-}
+routeRequirements(PostsController, PostsController.prototype.update);
+// [{ policy: PostPolicy, ability: 'update', args: [Function] }] — what the guard will enforce
 ```
 
-## `@Roles` and the `RolesGuard`
+`readCanRequirements(target)` returns those declared on one class or method, and
+`isOfficialPolicy(value)` tells an official policy class apart. The testing package's
+`requirementsOf(Controller, 'method')` builds on them.
 
-`@Can` is a **granular** ability check. `@Roles` is the **coarse** counterpart: "does the user hold any of these roles?" — the broad "is this a teacher?" question, with no resource involved.
+## Decision channel
 
-```ts
-import { Controller, Get } from '@nestjs/common';
-import { Roles } from '@dudousxd/nestjs-authz';
+Every requirement the official guard enforced and every `Gate` check is published, allowed or
+denied, on the `aviary:authz:decision` diagnostics channel (`authzDecisionChannel`), with the
+ability, `reason` (`'route'` for the guard, else `'policy'`, `'super-admin'`,
+`'decision-provider'`, `'permission-provider'`, `'gate'`, `'anonymous'`), `policy` and `handler`.
+The official package publishes denials only, on `nestjs:authorization:denied`. See
+[Ecosystem](/docs/authz/ecosystem#diagnostics--telescope--dudousxdnestjs-diagnostics).
 
-@Controller('staff')
-export class StaffController {
-  @Get('queue')
-  @Roles('admin', 'moderator') // allow if the user is an admin OR a moderator
-  queue() {}
-}
-```
+## The optional can-endpoint
 
-The `RolesGuard` allows the request when the current user holds **any** of the listed roles, and throws `ForbiddenException` otherwise. By default, roles are read straight off the user object — `user.roles` (a `string[]`) or `user.role` (a `string` or `string[]`) — so role checks work with **zero RBAC tables**:
-
-```ts
-// these users both satisfy @Roles('admin'):
-{ id: 1, roles: ['admin', 'editor'] }
-{ id: 2, role: 'admin' }
-```
-
-To derive roles from a different shape, override the resolver in the module:
+For abilities not already shipped to the client, mount a fallback endpoint (off by default):
 
 ```ts
 AuthzModule.forRoot({
-  resolveRoles: (user) => user.membership?.roleNames ?? [],
+  canEndpoint: true,                 // POST /authz/can; or a custom path
+  resourceLoaders: { Post: (id) => posts.findOne(id) },
 });
 ```
 
-When the optional `RoleProvider` seam (from an [RBAC adapter](/docs/authz/rbac)) is also registered, the gate takes the **union** of the resolver's roles and the provider's. You can also check roles programmatically:
+It answers `{ ability, resource?: { type, id } }` (or an array of them, for a batch) with
+`{ allowed }`, through `gate.allows` for the user the official guard reads. Types:
+`CanRequestBody`, `CanResponseBody`, `CanBatchRequestBody`, `CanBatchResultItem`;
+`DEFAULT_CAN_ENDPOINT_PATH` is `'authz/can'`. With a loader for the `type`, the endpoint loads
+the real record so the linked policy's instance abilities run; without one, only class-level
+abilities and ad-hoc gates resolve. Unknown or ambiguous abilities answer `{ allowed: false }`.
 
-```ts
-await this.gate.hasRole('admin');
-await this.gate.hasAnyRole(['admin', 'moderator']);
-// and on an explicit user:
-await this.gate.forUser(someUser).hasAnyRole(['admin']);
-```
-
-<Callout type="info">
-`@Roles` and `@Can` are complementary, not redundant. Use `@Roles` for broad gatekeeping ("only staff reach this controller") and `@Can` for fine-grained per-resource decisions ("can this staff member edit *this* record"). They stack: put `@Roles` on the controller and `@Can` on the sensitive methods.
-</Callout>
-
-## The optional can-endpoint controller
-
-Frontends often need to ask "**can I** do X?" so they can show or hide a button before the user clicks it. The ideal answer is to ship abilities to the client without a request (via [nestjs-authz-inertia](/docs/authz/ecosystem) shared props, or per-resource `can` maps). But for the abilities not already hydrated on the client, authz can mount a small fallback endpoint.
-
-It's **off by default**. Enable it via the `canEndpoint` option:
+The endpoint is open to the official guard (`authorization:can-anyone` on its class), since it
+answers guests too (with `false`s). To put it behind your own guards, or tag it for OpenAPI, pass
+`decorators`, applied to every controller the module mounts, after its own:
 
 ```ts
 AuthzModule.forRoot({
-  canEndpoint: true,            // mount at the default path 'authz/can'
-  // canEndpoint: 'api/authz/can', // or a custom path
-});
-```
-
-When enabled, this registers a controller exposing `POST {path}`. The request and response bodies are typed exports:
-
-```ts
-import type { CanRequestBody, CanResponseBody } from '@dudousxd/nestjs-authz';
-
-// CanRequestBody:
-{ ability: string; resource?: { type: string; id?: string | number } | null }
-
-// CanResponseBody:
-{ allowed: boolean }
-```
-
-The endpoint runs `gate.allows(ability, resource?)` for the **current (context) user** and returns `{ allowed }`. The default mount path is also exported as a constant:
-
-```ts
-import { DEFAULT_CAN_ENDPOINT_PATH } from '@dudousxd/nestjs-authz'; // 'authz/can'
-```
-
-<Callout type="warn">
-The `resource` in the request body is only a `{ type, id }` shim — it matches a registered policy *only if that policy was authored to read those fields*. The endpoint is therefore best suited to **class-level abilities and ad-hoc gates**; instance-specific decisions should come from shared props or per-resource maps. An unresolved or ambiguous ability fails **closed** — it returns `{ allowed: false }`, never a 500.
-</Callout>
-
-The endpoint is the last-resort target of the [codegen](/docs/authz/ecosystem)-emitted `can()` helper. If you advertise it under `forRootAsync`, declare `canEndpoint` directly on the async options (it's read at module-definition time, before the async factory resolves):
-
-```ts
-AuthzModule.forRootAsync({
   canEndpoint: true,
-  useFactory: () => ({ /* ... */ }),
+  decorators: [UseGuards(JwtAuthGuard), ApiTags('authz')],
 });
 ```
+
+Each registration builds its own controller class, so decorators never leak between two.
+
+Under `forRootAsync`, set `canEndpoint` and `decorators` on the async options themselves:
+controllers are registered before the factory runs.
 
 ## Next steps
 
 <Cards>
-  <Card title="Resource resolution" href="/docs/authz/resource-resolution" description="How @Can loads the instance it hands your policy — and how to load real entities." />
-  <Card title="Current user" href="/docs/authz/current-user" description="Who the guards authorize, and the UserRef caveat." />
-  <Card title="Policies" href="/docs/authz/policies" description="The rules @Can enforces." />
-  <Card title="Ecosystem" href="/docs/authz/ecosystem" description="Shipping `can()` to the frontend without an endpoint." />
+  <Card title="Resource resolution" href="/docs/authz/resource-resolution" description="byId and the ResourceResolver behind it." />
+  <Card title="RBAC" href="/docs/authz/rbac" description="RolePolicy, PermissionPolicy and the adapters." />
+  <Card title="Gates" href="/docs/authz/gates" description="The same checks from services." />
+  <Card title="Ecosystem" href="/docs/authz/ecosystem" description="Abilities on the frontend without the endpoint." />
 </Cards>

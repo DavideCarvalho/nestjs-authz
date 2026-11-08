@@ -8,19 +8,19 @@ skills:
     package: "@dudousxd/nestjs-authz"
     path: packages/core/skills/authz-setup/SKILL.md
     type: core
-    summary: Install + AuthzModule.forRoot/forRootAsync wiring, nestjs-context peer, the resolveUser/UserRef gotcha.
+    summary: Install next to the official AuthorizationModule; AuthzModule.forRoot/forRootAsync; deny-by-default; the ambient Gate user (AuthenticationContext, then nestjs-context + resolveUser).
 
   - name: authz-policies
     package: "@dudousxd/nestjs-authz"
     path: packages/core/skills/authz-policies/SKILL.md
     type: core
-    summary: "@Policy classes, ability methods, before hook, deny messages, superAdmin/after hooks."
+    summary: "Official @Policy() classes, @PolicyFor link, AuthzPolicy/superAdmin, scope(); migrating the 0.8 @Policy(Resource)."
 
   - name: authz-enforcement
     package: "@dudousxd/nestjs-authz"
     path: packages/core/skills/authz-enforcement/SKILL.md
     type: core
-    summary: "@Can / @Roles guards, ResourceResolver seam, programmatic Gate API."
+    summary: "Official @Can with byId/roles/permission/ability/staticCanArgs, @Roles/@Permission sugar, Gate API, migrating the string @Can."
 
   - name: authz-query-scopes
     package: "@dudousxd/nestjs-authz"
@@ -32,4 +32,4 @@ skills:
     package: "@dudousxd/nestjs-authz"
     path: packages/core/skills/authz-rbac-seams/SKILL.md
     type: core
-    summary: PERMISSION_PROVIDER / ROLE_PROVIDER seams, wildcard permissions, persisted AuthzRbacModule wiring.
+    summary: PERMISSION_PROVIDER / ROLE_PROVIDER seams behind RolePolicy / PermissionPolicy, wildcard permissions, persisted AuthzRbacModule wiring.

@@ -1,4 +1,4 @@
-import type { Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import type { BoundGate, Gate, PolicyIndex } from '@dudousxd/nestjs-authz';
 import { type ResolveAbilitiesOptions, resolveClassAbilities } from './resolve-abilities.js';
 
 /** Default prop namespace: `props.auth.can`. */
@@ -28,8 +28,8 @@ export interface CreateAuthzShareOptions extends ResolveAbilitiesOptions {
  * `hydrateFromInertiaProps` then reads `props.auth.can`.
  */
 export function createAuthzShare(
-  gate: Gate,
-  policies: PolicyRegistry,
+  gate: Gate | BoundGate,
+  policies: PolicyIndex,
   options: CreateAuthzShareOptions = {},
 ): () => Promise<Record<string, unknown>> {
   const propKey = options.propKey ?? DEFAULT_PROP_KEY;

@@ -1,3 +1,4 @@
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import {
   type DataSource,
   type EntityMetadata,
@@ -14,7 +15,6 @@ import {
   UserPermissionEntity,
   UserRoleEntity,
 } from './entities.js';
-import { assertSafeIdentifier } from './sql.js';
 import type { AuthzStoreOptions, TableNames } from './types.js';
 
 /** An entity class → its resolved table name, honoring BYO overrides + optional schema. */

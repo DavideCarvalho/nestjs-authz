@@ -1,7 +1,7 @@
 # @dudousxd/nestjs-authz-prisma
 
 Prisma RBAC persistence for [`@dudousxd/nestjs-authz`](https://github.com/DavideCarvalho/nestjs-authz) —
-roles, permissions, and a Gate seam, with **zero connection ownership** (your app owns the
+roles and permissions for the official `@nestjs/authorization` policies, with **zero connection ownership** (your app owns the
 `PrismaClient`; this package never opens a connection and never imports `@prisma/client`).
 
 This is the Prisma sibling of `@dudousxd/nestjs-authz-typeorm`: identical store surface and
@@ -10,7 +10,7 @@ This is the Prisma sibling of `@dudousxd/nestjs-authz-typeorm`: identical store 
 ## Install
 
 ```bash
-pnpm add @dudousxd/nestjs-authz-prisma @dudousxd/nestjs-authz
+pnpm add @dudousxd/nestjs-authz-prisma @dudousxd/nestjs-authz @nestjs/authorization
 ```
 
 No `@prisma/client` is required by this package — it depends only on the structural
@@ -92,15 +92,29 @@ AuthzRbacModule.forRootAsync({
 });
 ```
 
-Once wired, the Gate consults persisted RBAC:
+Once wired, persisted roles and permissions guard routes through the official
+`@nestjs/authorization` guard, as the core's `RolePolicy` / `PermissionPolicy`:
 
 ```ts
-await store.givePermissionToRole('editor', 'posts.publish');
+await store.givePermissionToRole('editor', 'posts.*');
 await store.assignRole({ type: 'user', id: 7 }, 'editor');
 
-gate.forUser(user).allows('posts.publish'); // true (PERMISSION_PROVIDER seam, wildcards supported)
-gate.forUser(user).hasRole('editor');       // true (ROLE_PROVIDER seam)
+@Permission('posts.publish')                                  // posts.* grants it
+@Can(PermissionPolicy, 'has', permission('posts.publish'))   // the same, spelled out
+@Roles('editor')                                              // @Can(RolePolicy, 'has', roles('editor'))
 ```
+
+and in services, through the `Gate`:
+
+```ts
+gate.forUser(user).allows('posts.publish');               // true (PERMISSION_PROVIDER seam)
+gate.forUser(user).allows(PermissionPolicy, 'has', 'posts.publish');
+gate.forUser(user).hasRole('editor');                     // true (ROLE_PROVIDER seam)
+```
+
+The user is the one the official guard reads (`AuthorizationModule.forRoot({ getUser })`,
+default `request.user`), mapped to a store ref with `userRefFrom` (default `{ type, id }` or
+`{ id }`).
 
 ## Role sources (manual vs SSO/SCIM)
 

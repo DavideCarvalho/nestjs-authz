@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { CONTEXT_ACCESSOR, Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import { AuthzModule, CONTEXT_ACCESSOR, Gate } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
@@ -75,8 +76,12 @@ describe('PrismaAuthzStore (structural fake client)', () => {
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 
@@ -91,8 +96,12 @@ describe('PrismaAuthzStore (structural fake client)', () => {
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 
@@ -116,8 +125,12 @@ describe('PrismaAuthzStore (structural fake client)', () => {
       get: () => requestStore,
     };
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: context }],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [{ provide: CONTEXT_ACCESSOR, useValue: context }],
     }).compile();
     await moduleRef.init();
 
@@ -145,8 +158,11 @@ describe('PrismaAuthzStore (structural fake client)', () => {
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
     }).compile();
     await moduleRef.init();
 
@@ -218,8 +234,12 @@ describe('PrismaAuthzStore (structural fake client)', () => {
     await s.assignRole(5, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ client: c })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ client: c }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 

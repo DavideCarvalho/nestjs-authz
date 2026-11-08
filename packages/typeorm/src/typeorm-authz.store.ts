@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
@@ -13,11 +14,11 @@ import {
 import type { DataSource } from 'typeorm';
 import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
-import { Placeholders, assertSafeIdentifier } from './sql.js';
+import { Placeholders } from './sql.js';
 import type { AuthzStoreOptions, RoleAssignmentScope, TenantScope } from './types.js';
 
-// Re-exported so `@dudousxd/nestjs-authz-typeorm`'s public `UserAuthz` keeps the
-// same import path; canonical definition lives in core's store-kit.
+// These types appear in this store's public method signatures, so the package exports them
+// next to the store. They are defined once in core's store-kit.
 export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
 /**

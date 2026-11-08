@@ -1,19 +1,18 @@
-import 'reflect-metadata';
-import { SetMetadata } from '@nestjs/common';
-import { ROLES_METADATA } from '../tokens.js';
+import { Can } from '@nestjs/authorization';
+import { permission, roles } from '../helpers.js';
+import { PermissionPolicy } from '../policies/permission.policy.js';
+import { RolePolicy } from '../policies/role.policy.js';
 
 /**
- * Guard a route by COARSE role membership: the request is allowed when the current
- * user holds ANY of the listed roles. This is the broad "is teacher?" check, as
- * opposed to the granular ability check of `@Can`.
- *
- * Roles come from the user object (`user.roles` / `user.role`) by default, plus the
- * optional `ROLE_PROVIDER` seam (a persisted RBAC store) when registered — see
- * {@link RolesGuard}.
- *
- * @example
- *   `@Roles('admin', 'teacher')`  // allow if the user is an admin OR a teacher
+ * Sugar for the official `@Can(RolePolicy, 'has', roles(...names))`: the user holds any
+ * of the roles. Stacks with other `@Can()`s (all must pass); a class-level `@Roles`
+ * applies to every handler, together with the method's.
  */
-export function Roles(...roles: string[]): MethodDecorator & ClassDecorator {
-  return SetMetadata(ROLES_METADATA, roles);
+export function Roles(...names: string[]): MethodDecorator & ClassDecorator {
+  return Can(RolePolicy, 'has', roles(...names));
+}
+
+/** Sugar for the official `@Can(PermissionPolicy, 'has', permission(...names))`: any of the permissions. */
+export function Permission(...names: string[]): MethodDecorator & ClassDecorator {
+  return Can(PermissionPolicy, 'has', permission(...names));
 }

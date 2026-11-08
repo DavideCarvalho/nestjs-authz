@@ -3,7 +3,9 @@
 A [`@dudousxd/nestjs-codegen`](https://www.npmjs.com/package/@dudousxd/nestjs-codegen) **extension**
 that discovers the authorization abilities declared with
 [`@dudousxd/nestjs-authz`](https://github.com/DavideCarvalho/nestjs-authz)'s
-`@Can(ability, Resource?)` (and, optionally, `@Policy` method abilities) and emits a typed `can()`
+official `@Can(Policy, 'ability', ...)` decorators (from `@nestjs/authorization`), the
+`@Permission(...)` sugar and, optionally, the abilities of `@Policy()` / `@PolicyFor(Resource)`
+classes, and emits a typed `can()`
 helper into your generated `api.ts` — so checking a permission on the frontend is a compile-time
 type, not a magic string.
 
@@ -30,20 +32,29 @@ export default defineConfig({
 
 ## What it emits
 
-Given controllers decorated with `@Can(...)`:
+Given controllers decorated with the official `@Can(...)`:
 
 ```ts
 @Controller('posts')
 export class PostsController {
   @Patch(':id')
-  @Can('update', Post)
+  @Can(PostPolicy, 'update', byId(Post))          // → 'update' on Post
   update() {}
 
   @Post(':id/publish')
-  @Can('access-admin')
+  @Can(GatePolicy, 'allows', ability('access-admin')) // → 'access-admin'
   publish() {}
 }
 ```
+
+How each form maps to a client ability:
+
+| Decorator | Client ability |
+| --- | --- |
+| `@Can(PostPolicy, 'update', byId(Post))` | `update` on `Post` (from `byId`, else the policy's `@PolicyFor` link, else `PostPolicy` → `Post`) |
+| `@Can(PermissionPolicy, 'has', permission('posts.publish'))`, `@Permission('posts.publish')` | `posts.publish` |
+| `@Can(GatePolicy, 'allows', ability('access-admin'))` | `access-admin` |
+| `@Roles(...)`, `@Can(RolePolicy, ...)` | none (roles are not client abilities) |
 
 the generated `api.ts` gains:
 
@@ -105,7 +116,7 @@ async can(@Body() body: { ability: string; resource?: { type: string; id?: strin
 | Option | Default | Description |
 | --- | --- | --- |
 | `endpoint` | `'/authz/can'` | Server endpoint the generated `can()` POSTs to (expects `{ allowed }`). |
-| `discoverPolicies` | `true` | Also treat `@Policy(Resource)` method names as class-level abilities. |
+| `discoverPolicies` | `true` | Also list the methods of `@Policy()` / `@PolicyFor(Resource)` classes (but `before` and `scope`) as abilities. |
 
 ## Caveats
 

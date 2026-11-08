@@ -21,6 +21,7 @@ export {
 } from './authz-rbac.module.js';
 export type {
   AuthzRbacModuleAsyncOptions,
+  AuthzRbacModuleBaseOptions,
   AuthzRbacModuleOptions,
   UserRefMapper,
 } from './authz-rbac.module.js';

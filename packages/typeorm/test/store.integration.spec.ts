@@ -1,6 +1,18 @@
 import 'reflect-metadata';
-import { CONTEXT_ACCESSOR, Gate, PolicyRegistry } from '@dudousxd/nestjs-authz';
+import {
+  AuthzModule,
+  CONTEXT_ACCESSOR,
+  Gate,
+  PermissionPolicy,
+  RolePolicy,
+  Roles,
+  permission,
+} from '@dudousxd/nestjs-authz';
+import { Can } from '@nestjs/authorization';
+import { AuthorizationModule } from '@nestjs/authorization';
+import { Controller, Get } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import request from 'supertest';
 import type { DataSource } from 'typeorm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AuthzRbacModule } from '../src/authz-rbac.module.js';
@@ -99,8 +111,12 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 
@@ -119,8 +135,12 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 
@@ -139,8 +159,12 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
     await store.assignRole({ type: 'user', id: 42 }, 'editor');
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [],
     }).compile();
     await moduleRef.init();
 
@@ -166,8 +190,12 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
       get: () => requestStore,
     };
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthzRbacModule.forRoot({ store, autoCreateSchema: false })],
-      providers: [PolicyRegistry, Gate, { provide: CONTEXT_ACCESSOR, useValue: context }],
+      imports: [
+        AuthorizationModule.forRoot(),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      providers: [{ provide: CONTEXT_ACCESSOR, useValue: context }],
     }).compile();
     await moduleRef.init();
 
@@ -188,5 +216,54 @@ describeIntegration(`TypeOrmAuthzStore (integration, ${targetDialect()})`, () =>
     expect(getRoles).toHaveBeenCalledTimes(1);
 
     await moduleRef.close();
+  });
+
+  it('persisted roles and permissions guard routes as official policies', async () => {
+    await store.givePermissionToRole('editor', 'posts.*');
+    await store.assignRole({ type: 'user', id: 42 }, 'editor');
+    await store.assignRole({ type: 'user', id: 7 }, 'admin', { tenantId: 'acme' });
+
+    @Controller('posts')
+    class PostController {
+      @Get('publish')
+      @Can(PermissionPolicy, 'has', permission('posts.publish'))
+      publish() {
+        return { ok: true };
+      }
+      @Get('edit')
+      @Roles('editor')
+      edit() {
+        return { ok: true };
+      }
+    }
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        AuthorizationModule.forRoot({
+          getUser: (ctx) => {
+            const id = ctx.switchToHttp().getRequest().headers['x-user-id'];
+            return id ? { type: 'user', id: Number(id) } : undefined;
+          },
+        }),
+        AuthzModule.forRoot(),
+        AuthzRbacModule.forRoot({ store, autoCreateSchema: false }),
+      ],
+      controllers: [PostController],
+    }).compile();
+    const app = moduleRef.createNestApplication({ logger: false });
+    await app.init();
+    const http = app.getHttpServer();
+
+    await request(http).get('/posts/publish').set('x-user-id', '42').expect(200);
+    await request(http).get('/posts/publish').set('x-user-id', '99').expect(403);
+    await request(http).get('/posts/publish').expect(401);
+    await request(http).get('/posts/edit').set('x-user-id', '42').expect(200);
+    await request(http).get('/posts/edit').set('x-user-id', '7').expect(403);
+
+    const gate = moduleRef.get(Gate);
+    expect(await gate.forUser({ type: 'user', id: 42 }).allows(RolePolicy, 'has', 'editor')).toBe(
+      true,
+    );
+    await app.close();
   });
 });

@@ -1,15 +1,17 @@
 import 'reflect-metadata';
 import {
+  AuthzModule,
+  type AuthzModuleOptions,
   CONTEXT_ACCESSOR,
   Gate,
-  Policy,
-  PolicyRegistry,
+  PolicyFor,
   type ScopeConstraint,
   and,
   eq,
   or,
   where,
 } from '@dudousxd/nestjs-authz';
+import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { Column, type DataSource, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -65,12 +67,9 @@ async function seed(ds: DataSource, Post: new () => object): Promise<void> {
   ]);
 }
 
-function buildGate(
-  Post: new () => object,
-  opts: ConstructorParameters<typeof Gate>[1] = {},
-): Promise<Gate> {
+function buildGate(Post: new () => object, opts: AuthzModuleOptions = {}): Promise<Gate> {
   return (async () => {
-    @Policy(Post)
+    @PolicyFor(Post)
     class PostPolicy {
       // A user sees their OWN posts, or any PUBLISHED post.
       scope(user: Author): ScopeConstraint {
@@ -78,17 +77,10 @@ function buildGate(
       }
     }
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        PolicyRegistry,
-        {
-          provide: Gate,
-          useFactory: (r: PolicyRegistry) => new Gate(r, opts),
-          inject: [PolicyRegistry],
-        },
-      ],
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot(opts)],
+      providers: [PostPolicy],
     }).compile();
-    const registry = moduleRef.get(PolicyRegistry);
-    registry.register(new PostPolicy());
+    await moduleRef.init();
     return moduleRef.get(Gate);
   })();
 }
@@ -153,24 +145,17 @@ describeIntegration(`TypeORM applyScope (integration, ${targetDialect()})`, () =
       userRef: () => undefined,
       get: () => undefined,
     };
-    @Policy(Post)
+    @PolicyFor(Post)
     class PostPolicy {
       scope(user: Author): ScopeConstraint {
         return or(eq('authorId', user.id), eq('published', 1));
       }
     }
     const moduleRef = await Test.createTestingModule({
-      providers: [
-        PolicyRegistry,
-        {
-          provide: Gate,
-          useFactory: (r: PolicyRegistry) => new Gate(r, {}, accessor),
-          inject: [PolicyRegistry],
-        },
-        { provide: CONTEXT_ACCESSOR, useValue: accessor },
-      ],
+      imports: [AuthorizationModule.forRoot(), AuthzModule.forRoot({})],
+      providers: [PostPolicy, { provide: CONTEXT_ACCESSOR, useValue: accessor }],
     }).compile();
-    moduleRef.get(PolicyRegistry).register(new PostPolicy());
+    await moduleRef.init();
     const gate = moduleRef.get(Gate);
 
     const qb = ds.getRepository(Post).createQueryBuilder('post');

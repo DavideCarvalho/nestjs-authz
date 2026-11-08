@@ -1,5 +1,14 @@
 # @dudousxd/nestjs-authz-react
 
+## 0.1.3
+
+### Patch Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix packages that could be published without files their `exports` point to. `tsc` builds no longer use a `.tsbuildinfo` that can outlive `dist/` and skip emitting files. A new `check:exports` step (also `prepack`) fails the release if any `exports`/`main`/`types` path is missing.
+
+- Updated dependencies [[`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918)]:
+  - @dudousxd/nestjs-authz-client@0.2.2
+
 ## 0.1.2
 
 ### Patch Changes

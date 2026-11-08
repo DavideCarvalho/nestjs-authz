@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-testing",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Test helpers for @dudousxd/nestjs-authz on @nestjs/authorization: a real Gate on a Nest testing module, expectCan/expectCannot, in-memory RBAC fakes, route requirement inspection.",
   "license": "MIT",
   "repository": {

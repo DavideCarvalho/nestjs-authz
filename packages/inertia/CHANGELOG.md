@@ -1,5 +1,27 @@
 # @dudousxd/nestjs-authz-inertia
 
+## 0.2.0
+
+### Minor Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Share the class-level abilities of every official `@Policy()` (linked with `@PolicyFor` or not,
+  keyed `<resource>.<method>`), checked through the official `AuthorizationService` for the user
+  the official guard reads. `resolveClassAbilities` / `createAuthzShare` take a `PolicyIndex`
+  (was `PolicyRegistry`) and accept `gate.forUser(user)`. The denial filter also redirects the
+  official guard's 401 to `loginUrl`; without nestjs-context a 403 now goes to `forbiddenUrl`.
+  Requires `@dudousxd/nestjs-authz` 0.9, NestJS 12 and Node 22+.
+
+  **Removed:** the `@dudousxd/nestjs-authz-inertia/client` subpath, which only re-exported the
+  client package. Import `AbilityStore`, `createCan`, `hydrateFromInertiaProps` and
+  `hydrateResource` from `@dudousxd/nestjs-authz-client` directly.
+
+### Patch Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix packages that could be published without files their `exports` point to. `tsc` builds no longer use a `.tsbuildinfo` that can outlive `dist/` and skip emitting files. A new `check:exports` step (also `prepack`) fails the release if any `exports`/`main`/`types` path is missing.
+
+- Updated dependencies [[`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918)]:
+  - @dudousxd/nestjs-authz-client@0.2.2
+
 ## 0.1.3
 
 ### Patch Changes

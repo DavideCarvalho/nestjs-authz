@@ -1,5 +1,23 @@
 # @dudousxd/nestjs-authz-typeorm
 
+## 0.6.0
+
+### Minor Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Run on `@dudousxd/nestjs-authz` 0.9 and `@nestjs/authorization`: persisted roles and
+  permissions now guard routes through the official guard as the core's `RolePolicy` /
+  `PermissionPolicy` (`@Roles('editor')`, `@Permission('posts.publish')`), and the guard and the
+  handler's `Gate` calls share one permission and role fetch per request. The store API
+  (role sources, admin management, tenant-scoped roles where supported) and `AuthzRbacModule`
+  are unchanged. A persisted permission named like a policy ability no longer bypasses that
+  policy (see the core changeset). Requires NestJS 12, `@nestjs/authorization` ^0.1.3 and Node 22+.
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `AuthzRbacModule.forRoot({ connectionName, storeOptions })` (and `forRootAsync({ connectionName, storeOptions, useFactory })`) builds the store from a connection registered with NestJS's `@nestjs/drizzle` / `@nestjs/typeorm`, injecting `getDrizzleToken(connectionName)` / `getDataSourceToken(connectionName)` (`'default'` for the default connection). Both are optional peers. Passing a `store` you built yourself works as before. `AuthzRbacModuleOptions` is now a union of the two forms, and `AuthzRbacModuleAsyncOptions` takes `connectionName` next to `useFactory`.
+
+### Patch Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix packages that could be published without files their `exports` point to. `tsc` builds no longer use a `.tsbuildinfo` that can outlive `dist/` and skip emitting files. A new `check:exports` step (also `prepack`) fails the release if any `exports`/`main`/`types` path is missing.
+
 ## 0.5.1
 
 ### Patch Changes

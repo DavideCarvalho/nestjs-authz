@@ -1,5 +1,24 @@
 # @dudousxd/nestjs-authz-codegen
 
+## 0.3.0
+
+### Minor Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Abilities of a policy without a `@PolicyFor(Resource)` link are now emitted model-less instead of
+  under a resource guessed from the class name (`InvoicePolicy` → `Invoice`). The `Gate` (and the
+  `can()` endpoint) resolves a string ability on a resource only through that link, so the guessed
+  keys could never resolve. Add `@PolicyFor(Invoice)` to keep the resource key.
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Type client abilities from the official `@Can(Policy, 'ability', byId(Resource))`,
+  `@Permission` / `PermissionPolicy` permission names, `GatePolicy` abilities and
+  `@Policy()` / `@PolicyFor()` classes (skipping `before` and `scope`). The 0.8 string
+  `@Can('update', Post)` and `@Policy(Post)` are no longer read; a policy's resource comes from
+  `@PolicyFor(Resource)` (else its name). Peers on `@dudousxd/nestjs-authz` `>=0.9.0 <0.10.0`.
+
+### Patch Changes
+
+- [#67](https://github.com/DavideCarvalho/nestjs-authz/pull/67) [`32e967f`](https://github.com/DavideCarvalho/nestjs-authz/commit/32e967ffbcd68a97e8effc77af9c16bbbafdc918) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix packages that could be published without files their `exports` point to. `tsc` builds no longer use a `.tsbuildinfo` that can outlive `dist/` and skip emitting files. A new `check:exports` step (also `prepack`) fails the release if any `exports`/`main`/`types` path is missing.
+
 ## 0.2.0
 
 ### Minor Changes

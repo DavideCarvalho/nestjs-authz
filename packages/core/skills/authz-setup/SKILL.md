@@ -56,8 +56,9 @@ level next to `useFactory`, never from the factory's return — the module throw
 
 - The official module must stay global (its default): the `Gate` injects `AuthorizationService`.
 - `getUser` is the only user on routes. The `Gate`'s ambient user (calls without `forUser`) is
-  `@nestjs/authentication`'s `AuthenticationContext.user` when that package is installed and
-  has one, else nestjs-context's `{ type, id }` ref, hydrated by `resolveUser` once per request.
+  `@nestjs/authentication`'s `AuthenticationContext.user` when that package is installed and its
+  scope is active (its answer is final, so an anonymous call there is a guest), else nestjs-context's
+  `{ type, id }` ref, hydrated by `resolveUser` once per request.
 - Every route needs a declaration: the official guard denies a handler with no `@Can()`,
   `@Can.Anyone()` or `@Public()`.
 

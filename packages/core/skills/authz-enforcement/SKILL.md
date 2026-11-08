@@ -68,7 +68,8 @@ persisted permission named like one of its abilities (`update`) does not bypass 
 `superAdmin` short-circuits a policy. `authorize()` throws the official `AuthorizationError`.
 
 Without `forUser()`, the user is `@nestjs/authentication`'s `AuthenticationContext.user`
-when that package is installed and has one for the call, else nestjs-context's user ref
+when that package is installed and its scope is active for the call (its answer is final,
+so an anonymous call there is a guest), else nestjs-context's user ref
 (hydrated once per request by `resolveUser`), else a guest.
 
 Inside a nestjs-context request, every check shares one `resolveUser`, one permission fetch

@@ -51,7 +51,7 @@ How each form maps to a client ability:
 
 | Decorator | Client ability |
 | --- | --- |
-| `@Can(PostPolicy, 'update', byId(Post))` | `update` on `Post` (from `byId`, else the policy's `@PolicyFor` link, else `PostPolicy` → `Post`) |
+| `@Can(PostPolicy, 'update', byId(Post))` | `update` on `Post` (from `byId`, else the policy's `@PolicyFor` link; with neither, no resource) |
 | `@Can(PermissionPolicy, 'has', permission('posts.publish'))`, `@Permission('posts.publish')` | `posts.publish` |
 | `@Can(GatePolicy, 'allows', ability('access-admin'))` | `access-admin` |
 | `@Roles(...)`, `@Can(RolePolicy, ...)` | none (roles are not client abilities) |
@@ -120,7 +120,7 @@ async can(@Body() body: { ability: string; resource?: { type: string; id?: strin
 
 ## Caveats
 
-Decorators are discovered by their **canonical names** — import `@Can` / `@Policy` under their real
-names. An aliased import (`import { Can as Authorize } from '@dudousxd/nestjs-authz'`) is NOT
-discovered, because codegen matches the decorator identifier (`Can` / `Policy`) syntactically and
-does not resolve aliases.
+Decorators are discovered by their **canonical names** — import `@Can`, `@Permission`, `@Policy`
+and `@PolicyFor` under their real names. An aliased import
+(`import { Can as Authorize } from '@nestjs/authorization'`) is NOT discovered, because codegen
+matches the decorator identifier syntactically and does not resolve aliases.

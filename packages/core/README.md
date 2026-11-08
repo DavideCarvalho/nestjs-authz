@@ -189,6 +189,7 @@ decorators are gone: move each one to its official form.
 | `gate.allows()` user from nestjs-context | `AuthenticationContext.user` inside its scope (`null` there is a guest), nestjs-context outside it |
 | a persisted permission named like a policy ability grants it | the policy decides (only `superAdmin` bypasses it), in checks and in `scope()` |
 | `DecisionProvider` / `superAdmin` see a guest as `undefined` | `null` |
+| a `DecisionProvider` deny `message` (`{ allowed: false, message }`) is the 403's message | dropped: the 403 is the official `{ statusCode: 403, message: 'Forbidden' }`. `@nestjs/authorization` has no deny-with-reason (a policy returns `true` or denies; an exception it throws counts as a failure, not a denial). To show a reason, throw your own `ForbiddenException(reason)` from the ability. A route then gets your body, but no `denied` event is emitted and `AuthorizationService.can()` throws instead of returning `false`. |
 | `DecisionProvider` asked by the Gate on every check | asked by `AuthzPolicy.before()` on routes, and by `Gate` string abilities |
 | `import … from '@dudousxd/nestjs-authz-inertia/client'` | `import … from '@dudousxd/nestjs-authz-client'` (the subpath is removed) |
 
@@ -222,6 +223,18 @@ has no such option):
    to the official `AuthorizationGuard` as is: same `getUser`, same policies, same 401 for a guest
    and 403 for a user, same `denied` event. A route with no requirement is let through. The app
    fails to start if the official global guard is still on, because it would keep denying them.
+
+   **The boot log has one expected ERROR in this mode.** `@nestjs/authorization` checks at
+   startup that a guard enforces each `@Can()`, and it recognizes only its own
+   `AuthorizationGuard`. It does not see `AuthzGuard`, so it logs:
+
+   ```text
+   ERROR [Authorization] @Can() is not enforced on PostController.update, … : AuthorizationModule has
+   globalGuard: false, and these handlers have no @UseGuards(AuthorizationGuard).
+   ```
+
+   That is safe: `AuthzGuard` enforces those handlers, and `AuthzModule` logs a line right after
+   it naming them. The error goes away at step 4.
 
 2. **Drop the 0.8 guard and move the old decorators.** Remove `RolesGuard` / `CanGuard` from
    `APP_GUARD` and `@UseGuards()`, and rewrite each string `@Can` / `@Policy(Post)` with the table

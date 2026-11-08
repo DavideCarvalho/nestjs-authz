@@ -93,7 +93,8 @@ export class AppModule {}
 
 `AuthzModule` registers `RolePolicy`, `PermissionPolicy`, `GatePolicy`, the `Gate`, the resource
 resolver `byId()` uses, and the allow + deny decision event. The official module must stay
-global (its default).
+global (its default). Without `AuthorizationModule.forRoot()` the app fails to start, with an
+error naming the missing import.
 
 </Step>
 

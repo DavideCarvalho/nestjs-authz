@@ -1,5 +1,16 @@
 # @dudousxd/nestjs-authz-inertia
 
+## 2.0.0
+
+### Major Changes
+
+- [#74](https://github.com/DavideCarvalho/nestjs-authz/pull/74) [`35421dc`](https://github.com/DavideCarvalho/nestjs-authz/commit/35421dc5b09bd271d5087d26e8536191ef6ba342) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - **Breaking:** require Node.js 24 or newer (`engines.node` is now `>=24`; it was `>=22`, and `>=20` for `-client` and `-react`). CI tests on Node 24 and 26. No API changes: see the Upgrading page in the docs.
+
+### Patch Changes
+
+- Updated dependencies [[`35421dc`](https://github.com/DavideCarvalho/nestjs-authz/commit/35421dc5b09bd271d5087d26e8536191ef6ba342)]:
+  - @dudousxd/nestjs-authz-client@0.3.0
+
 ## 1.0.0
 
 ### Patch Changes

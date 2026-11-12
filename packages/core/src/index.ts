@@ -1,7 +1,7 @@
 // Rewritten from this package's package.json by `scripts/sync-version.mjs`, which the root
 // `version-packages` script runs right after `changeset version`. The build is plain `tsc`
 // and injects nothing, so the literal below is what ships in dist.
-export const VERSION = '0.10.0';
+export const VERSION = '0.11.0';
 
 // Extras on top of @nestjs/authorization. Its own API (@Policy, @Can, Can.Anyone,
 // AuthorizationModule, AuthorizationService, AuthorizationGuard) is imported from there.

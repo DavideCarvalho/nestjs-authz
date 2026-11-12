@@ -1,5 +1,12 @@
 # @dudousxd/nestjs-authz-mikro-orm-v7-integration
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [[`35421dc`](https://github.com/DavideCarvalho/nestjs-authz/commit/35421dc5b09bd271d5087d26e8536191ef6ba342)]:
+  - @dudousxd/nestjs-authz@0.11.0
+
 ## 0.0.4
 
 ### Patch Changes

@@ -305,7 +305,9 @@ AuthzRbacModule.forRoot({
   mapped by `roles`. `kinds` picks the levels: with `kinds: ['clinic', 'unit']` both count, with
   `kinds: ['unit']` only the unit does.
 - `required` turns a check with no tenant into a `TenantRequiredError` (403,
-  `code: 'E_TENANT_REQUIRED'`) instead of a check in the global scope. It defaults to the
+  `code: 'E_TENANT_REQUIRED'`) instead of a check in the global scope. Each package (context and
+  every adapter) throws its own class, so match on `error.code === 'E_TENANT_REQUIRED'`, not
+  `instanceof`. It defaults to the
   context's `tenancy.required`. Checks that are not about tenant data never require a tenant:
   the Aviary console `authorize` helpers, the MCP dev tools, and any code you wrap in
   `runWithoutRequiredTenant(() => …)` from `@dudousxd/nestjs-authz`. A `tenant` resolver that

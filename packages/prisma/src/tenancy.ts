@@ -277,10 +277,17 @@ export function resolveRbacTenant(input: ResolveRbacTenantInput): RbacTenant {
   const roles = new Set<string>();
   if (map && levels.length > 0 && isContextUser(input.ref, accessor)) {
     const inScope = new Set(scopes.map((s) => s.tenantId));
+    const matched = filter?.mode === 'tenant' ? filter.tenant : undefined;
     for (const level of levels) {
-      if (level.role === undefined || !inScope.has(level.id)) continue;
-      if (!Object.prototype.hasOwnProperty.call(map, level.role)) continue;
-      const mapped = map[level.role];
+      // The matched level's role may live only on the tenant itself, not on its chain entry.
+      const role =
+        level.role ??
+        (matched && level.id === matched.id && level.kind === matched.kind
+          ? matched.role
+          : undefined);
+      if (role === undefined || !inScope.has(level.id)) continue;
+      if (!Object.prototype.hasOwnProperty.call(map, role)) continue;
+      const mapped = map[role];
       for (const role of typeof mapped === 'string' ? [mapped] : (mapped ?? [])) roles.add(role);
     }
   }

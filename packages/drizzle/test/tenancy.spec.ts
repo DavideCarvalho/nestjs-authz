@@ -165,6 +165,21 @@ describe('resolveRbacTenant: nested tenants (chain)', () => {
     ]);
   });
 
+  it("maps the matched tenant's own role when its chain entry has none", () => {
+    const ctx = context({
+      enabled: true,
+      filter: {
+        mode: 'tenant',
+        tenant: { ...UNIT, source: 'app' },
+        chain: [CLINIC, { id: 'u1', kind: 'unit' }],
+      },
+      user: { type: 'user', id: 1 },
+    });
+    expect(resolve(ctx, { tenancy: { roles: { member: 'unit_member' } } }).roles).toEqual([
+      'unit_member',
+    ]);
+  });
+
   it('passes family through to the context', () => {
     const ctx = context({ enabled: true, filter: { mode: 'tenant', tenant: ACME } });
     resolve(ctx, { tenancy: { family: 'account' } });

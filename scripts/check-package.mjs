@@ -31,15 +31,24 @@ for (const dir of dirs) {
   if (pkg.private === true) continue;
   console.log(`\n▸ ${pkg.name}`);
   const out = mkdtempSync(join(tmpdir(), 'check-package-'));
+  let step = 'publint';
   try {
     execFileSync(bin('publint'), ['run', '--strict', dir], { stdio: 'inherit' });
-    execFileSync('pnpm', ['pack', '--pack-destination', out], { cwd: dir, stdio: 'ignore' });
+    step = 'pnpm pack';
+    execFileSync('pnpm', ['pack', '--pack-destination', out], {
+      cwd: dir,
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
     const tarball = readdirSync(out).find((f) => f.endsWith('.tgz'));
+    if (!tarball) throw new Error(`pnpm pack produced no tarball in ${out}`);
+    step = 'attw';
     // Every package here is ESM-only, so the CommonJS resolution modes are not expected to work.
     execFileSync(bin('attw'), [join(out, tarball), '--profile', 'esm-only', '--format', 'table'], {
+      cwd: dir,
       stdio: 'inherit',
     });
-  } catch {
+  } catch (error) {
+    console.error(`✖ ${pkg.name}: ${step} failed${error?.message ? ` — ${error.message}` : ''}`);
     failed++;
   } finally {
     rmSync(out, { recursive: true, force: true });

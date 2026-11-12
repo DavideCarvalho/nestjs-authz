@@ -186,11 +186,14 @@ describe('PrismaAuthzStore (structural fake client)', () => {
 
     // The default fake exposes $queryRaw, so the store takes the raw branch.
     expect(typeof client.$queryRaw).toBe('function');
+    const fallback = vi.spyOn(client.userRole, 'findMany');
     expect((await store.getPermissionsForUser({ type: 'user', id: 7 })).sort()).toEqual([
       'posts.*',
       'posts.edit',
       'users.ban',
     ]);
+    // No silent fallback (e.g. `$queryRaw` called detached from the client).
+    expect(fallback).not.toHaveBeenCalled();
     // Wildcard grant is returned as a NAME (not expanded / existence-checked).
     expect(await store.userHasPermission({ type: 'user', id: 7 }, 'posts.*')).toBe(true);
   });

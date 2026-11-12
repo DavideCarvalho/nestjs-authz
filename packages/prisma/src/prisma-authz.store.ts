@@ -442,22 +442,24 @@ export class PrismaAuthzStore {
    *
    * Fast path: when the injected client exposes `$queryRaw`, assemble the set in a
    * SINGLE database round-trip via one JOIN (3 round-trips → 1). On ANY failure
-   * (missing `$queryRaw`, custom `@@map` table names, non-Postgres identifier
-   * quoting, etc.) it degrades to {@link getPermissionsViaDelegates}, so correctness
+   * (custom `@@map` table names, non-Postgres identifier quoting, etc.) it degrades to {@link getPermissionsViaDelegates}, so correctness
    * is preserved everywhere and only the common (Postgres + documented schema) case
    * gets the speedup.
    */
   async getPermissionsForUser(user: UserRef, scope?: TenantScope): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
 
-    const queryRaw = this.client.$queryRaw;
-    if (typeof queryRaw === 'function') {
+    // Call `$queryRaw` as a method ON the client, never detached: the real
+    // `PrismaClient.$queryRaw` reads `this`, so an unbound reference throws and would
+    // silently send every check down the slow path.
+    const client = this.client;
+    if (typeof client.$queryRaw === 'function') {
       try {
         // Single JOIN across the three documented `@@map` tables. Identifiers are
         // literal + double-quoted (Postgres); the user `${type}`/`${id}` VALUES go
         // through the tagged template as BOUND params — never string-concatenated.
         const rows = this.options?.tenantScoped
-          ? await queryRaw<Array<{ name: string }>>`
+          ? await client.$queryRaw<Array<{ name: string }>>`
           SELECT DISTINCT p."name" AS name
           FROM "authz_permissions" p
           JOIN "authz_role_permission" rp ON rp."permissionId" = p."id"
@@ -465,7 +467,7 @@ export class PrismaAuthzStore {
           WHERE ur."userType" = ${type} AND ur."userId" = ${id}
             AND ur."tenantId" IN (${GLOBAL_TENANT}, ${scope?.tenantId ?? GLOBAL_TENANT})
         `
-          : await queryRaw<Array<{ name: string }>>`
+          : await client.$queryRaw<Array<{ name: string }>>`
           SELECT DISTINCT p."name" AS name
           FROM "authz_permissions" p
           JOIN "authz_role_permission" rp ON rp."permissionId" = p."id"

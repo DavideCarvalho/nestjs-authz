@@ -75,7 +75,8 @@ describe('PrismaAuthzStore with schema (PGlite)', () => {
     await db.query(`INSERT INTO "authz_permissions" VALUES ('p', '*', NULL, now())`);
     await db.query(`INSERT INTO "authz_role_permission" VALUES ('r', 'p')`);
     await db.query(`INSERT INTO "authz_user_role" VALUES ('user', '1', 'r')`);
-  });
+    // PGlite boots a WASM Postgres: slow on a loaded CI runner.
+  }, 60_000);
 
   afterAll(async () => {
     await db.close();

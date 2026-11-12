@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthzDevTool, DEV_TOOLS_SLOT } from '../src/dev-tools.js';
 import { authzDecisionChannel } from '../src/diagnostics.js';
 import { PolicyFor } from '../src/links.js';
+import type { PermissionProvider } from '../src/permission-provider.js';
 import type { RbacDescription, RoleProvider } from '../src/role-provider.js';
 import { currentTenantScopeOverride } from '../src/tenant-override.js';
 import { DECISION_PROVIDER } from '../src/tokens.js';
@@ -86,6 +87,15 @@ function rbacProvider(): RoleProvider & { scopes: Array<string | null> } {
   };
 }
 
+/** A permission provider that reads the same fake store as {@link rbacProvider}. */
+function permissionsOf(roles: ReturnType<typeof rbacProvider>): PermissionProvider {
+  const list = async (user: unknown) => (await roles.describeRbac?.(user))?.permissions ?? [];
+  return {
+    hasPermission: async (user, permission) => (await list(user)).includes(permission),
+    getPermissions: list,
+  };
+}
+
 describe('authz dev tools', () => {
   beforeEach(() => {
     delete (globalThis as Record<symbol, unknown>)[DEV_TOOLS_SLOT];
@@ -152,8 +162,7 @@ describe('authz dev tools', () => {
 
   it('explains a permission granted by a store role and a direct grant, per tenant', async () => {
     const roles = rbacProvider();
-    const { provider } = permissionTable({ '1': ['posts.view'] });
-    const mod = await boot({ roles, permissions: provider });
+    const mod = await boot({ roles, permissions: permissionsOf(roles) });
     const explain = tool('authz_explain_check');
 
     const global = (await explain.run({ subjectId: '1', permission: 'posts.update' })) as Record<
@@ -161,8 +170,8 @@ describe('authz dev tools', () => {
       unknown
     >;
     expect(global).toMatchObject({
-      allowed: false,
-      reason: 'unresolved',
+      allowed: true,
+      reason: 'permission-provider',
       subject: { type: 'user', id: '1' },
       tenant: { id: null, from: 'global' },
       effectiveRoles: ['viewer'],
@@ -190,7 +199,68 @@ describe('authz dev tools', () => {
       ],
       directGrants: [],
     });
-    expect(roles.scopes).toEqual([null, 'acme']);
+    // The Gate's grant check, describeRbac and the coverage list: each in the requested scope.
+    expect(roles.scopes).toEqual([null, null, null, 'acme', 'acme', 'acme']);
+    await mod.close();
+  });
+
+  it('coverage only counts what the permission provider lists', async () => {
+    const roles = rbacProvider();
+    const { provider } = permissionTable({ '1': ['posts.view'] });
+    const mod = await boot({ roles, permissions: provider });
+    const result = await tool('authz_explain_check').run({
+      subjectId: '1',
+      permission: 'posts.update',
+      tenantId: 'acme',
+    });
+    // The store says editor has posts.* and a direct posts.update, but the deciding provider
+    // grants neither: the answer does not claim them.
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: 'unresolved',
+      grantingRoles: [],
+      directGrants: [],
+    });
+    await mod.close();
+  });
+
+  it('loaders run inside the requested tenant', async () => {
+    const seen: Array<unknown> = [];
+    const mod = await boot({
+      authz: {
+        devTools: {
+          loadSubject: (ref) => {
+            seen.push(currentTenantScopeOverride()?.tenantId);
+            return { id: ref.id };
+          },
+          loadResource: (ref) => {
+            seen.push(currentTenantScopeOverride()?.tenantId);
+            return { id: ref.id };
+          },
+        },
+      },
+    });
+    await tool('authz_explain_check').run({
+      subjectId: '1',
+      permission: 'x',
+      tenantId: 'acme',
+      resourceType: 'Post',
+      resourceId: '1',
+    });
+    await tool('authz_list_effective_roles').run({ subjectId: '1', tenantId: 'beta' });
+    await tool('authz_list_effective_permissions').run({ subjectId: '1', tenantId: '' });
+    expect(seen).toEqual(['acme', 'acme', 'beta', null]);
+    await mod.close();
+  });
+
+  it('a numeric tenantId is a tenant; another type is an error', async () => {
+    const roles = rbacProvider();
+    const mod = await boot({ roles });
+    const result = await tool('authz_list_effective_roles').run({ subjectId: '1', tenantId: 42 });
+    expect(result).toMatchObject({ tenant: { id: '42', from: 'explicit' } });
+    await expect(
+      tool('authz_list_effective_roles').run({ subjectId: '1', tenantId: true }),
+    ).rejects.toThrow('`tenantId` must be a string');
     await mod.close();
   });
 

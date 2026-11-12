@@ -184,8 +184,11 @@ function subjectOf(input: Record<string, unknown>): AuthzDevToolsRef {
 
 /** `tenantId` input → the forced scope (`null` = global), or `undefined` to keep the default. */
 function scopeOf(input: Record<string, unknown>): string | null | undefined {
-  if (typeof input.tenantId !== 'string') return undefined;
-  const id = input.tenantId.trim();
+  const value = input.tenantId;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value !== 'string') throw new Error('`tenantId` must be a string');
+  const id = value.trim();
   return id === '' ? null : id;
 }
 
@@ -281,7 +284,8 @@ export function authzDevTools(deps: AuthzDevToolsDeps): AuthzDevTool[] {
         'Why a subject can or cannot do something: the verdict and its reason (super-admin, ' +
         'decision-provider, policy, permission-provider, gate, anonymous, or unresolved when ' +
         'nothing defines the ability), what the decision provider said, the subject’s effective ' +
-        'roles with their sources, and which roles or direct grants cover the permission. ' +
+        'roles with their sources, and which roles or direct grants (in what the permission ' +
+        'provider lists) cover the permission. ' +
         'Read-only: no decision event is published.',
       input: {
         type: 'object',
@@ -312,33 +316,43 @@ export function authzDevTools(deps: AuthzDevToolsDeps): AuthzDevTool[] {
         }
         const scope = scopeOf(input);
         const hooks = hooksOf(deps.options());
-        const subject = await load(hooks.loadSubject, ref);
         const resourceRef =
           resourceType !== undefined && resourceId !== undefined
             ? { type: resourceType, id: resourceId }
             : undefined;
-        const resource = resourceRef ? await load(hooks.loadResource, resourceRef) : undefined;
 
         return inScope(scope, async () => {
+          // Loaded in the requested tenant, so tenant-scoped loaders see it.
+          const subject = await load(hooks.loadSubject, ref);
+          const resource = resourceRef ? await load(hooks.loadResource, resourceRef) : undefined;
           const decision = await deps.gate.explainFor(
             subject.value,
             permission,
             resource?.value as object | undefined,
           );
           const view = await roleView(deps.rbac, subject.value, scope);
+          // Coverage from the grants the Gate consults: the permission provider's list when it
+          // has one, else the RBAC adapter's view. A role only counts for what that list holds.
+          const provider = deps.rbac.permissions();
+          const listed =
+            typeof provider?.getPermissions === 'function'
+              ? new Set((await provider.getPermissions(subject.value)) ?? [])
+              : view.rbac
+                ? new Set(view.rbac.permissions)
+                : undefined;
           const grantingRoles: Array<{ role: string; matched: string[] }> = [];
           let directGrants: string[] = [];
-          if (view.rbac) {
+          if (listed) {
             const viaRoles = new Set<string>();
             for (const { role } of view.roles) {
-              const matched = (view.rbac.rolePermissions[role] ?? []).filter((p) =>
-                permissionSatisfied([p], permission),
+              const matched = (view.rbac?.rolePermissions[role] ?? []).filter(
+                (p) => listed.has(p) && permissionSatisfied([p], permission),
               );
               if (matched.length === 0) continue;
               grantingRoles.push({ role, matched: [...new Set(matched)] });
               for (const p of matched) viaRoles.add(p);
             }
-            directGrants = view.rbac.permissions.filter(
+            directGrants = [...listed].filter(
               (p) => permissionSatisfied([p], permission) && !viaRoles.has(p),
             );
           }
@@ -376,8 +390,9 @@ export function authzDevTools(deps: AuthzDevToolsDeps): AuthzDevTool[] {
       async run(input) {
         const ref = subjectOf(input);
         const scope = scopeOf(input);
-        const subject = await load(hooksOf(deps.options()).loadSubject, ref);
+        const hooks = hooksOf(deps.options());
         return inScope(scope, async () => {
+          const subject = await load(hooks.loadSubject, ref);
           const view = await roleView(deps.rbac, subject.value, scope);
           return {
             subject: ref,
@@ -405,8 +420,9 @@ export function authzDevTools(deps: AuthzDevToolsDeps): AuthzDevTool[] {
       async run(input) {
         const ref = subjectOf(input);
         const scope = scopeOf(input);
-        const subject = await load(hooksOf(deps.options()).loadSubject, ref);
+        const hooks = hooksOf(deps.options());
         return inScope(scope, async () => {
+          const subject = await load(hooks.loadSubject, ref);
           const provider = deps.rbac.permissions();
           const view = await roleView(deps.rbac, subject.value, scope);
           if (typeof provider?.getPermissions !== 'function') {
@@ -415,6 +431,8 @@ export function authzDevTools(deps: AuthzDevToolsDeps): AuthzDevTool[] {
               tenant: view.tenant,
               items: [],
               next: null,
+              subjectLoaded: subject.loaded,
+              ...(view.warning ? { warning: view.warning } : {}),
               note: provider
                 ? 'The permission provider cannot list permissions (no getPermissions).'
                 : 'No permission provider: install an RBAC adapter (AuthzRbacModule).',

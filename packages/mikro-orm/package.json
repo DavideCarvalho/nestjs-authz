@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-mikro-orm",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "description": "MikroORM RBAC persistence for @dudousxd/nestjs-authz — roles, permissions, and a Gate seam (zero connection ownership).",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": ">=0.9.0 <0.10.0",
+    "@dudousxd/nestjs-authz": ">=0.10.0",
     "@mikro-orm/core": "^6.0.0 || ^7.0.0",
     "@mikro-orm/nestjs": "^5.0.0 || ^6.0.0 || ^7.0.0",
     "@nestjs/authorization": "^0.1.3",

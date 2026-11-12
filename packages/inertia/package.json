@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-inertia",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Inertia.js integration for @dudousxd/nestjs-authz — share a user's abilities as props so client `can()` checks need no network request.",
   "license": "MIT",
   "repository": {
@@ -36,7 +36,7 @@
     "@dudousxd/nestjs-authz-client": "workspace:^"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": ">=0.9.0 <0.10.0",
+    "@dudousxd/nestjs-authz": ">=0.10.0",
     "@dudousxd/nestjs-context": ">=0.1.0",
     "@dudousxd/nestjs-inertia": ">=1.0.0",
     "@nestjs/authorization": "^0.1.3",

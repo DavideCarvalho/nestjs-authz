@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-codegen",
-  "version": "0.3.1",
+  "version": "1.0.0",
   "description": "nestjs-codegen extension for @dudousxd/nestjs-authz — discovers @Can abilities and emits a typed can() into your generated client.",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": ">=0.9.0 <0.10.0",
+    "@dudousxd/nestjs-authz": ">=0.10.0",
     "@dudousxd/nestjs-authz-client": ">=0.0.0",
     "@dudousxd/nestjs-codegen": ">=0.4.0"
   },

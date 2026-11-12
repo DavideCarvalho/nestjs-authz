@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.10.0
+
+### Minor Changes
+
+- [#71](https://github.com/DavideCarvalho/nestjs-authz/pull/71) [`750a6b3`](https://github.com/DavideCarvalho/nestjs-authz/commit/750a6b3f80deea3803dec8df5f9f8cf67a046ac1) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Protect Aviary consoles with the Gate. `AuthzModule` now provides the console gate the durable, telescope, media and agent consoles use for `authorize: '<gate name>'`, and exports `authorizeByRoles({ roles })`, `authorizeByPermission(permission)`, `authorizeByToken({ token })` and the console access types (`ConsoleAuthorize`, `ConsoleAuthorizer`, `ConsoleAuthorizeResult`, `ConsoleAuthorizerClass`, `ConsolePolicyCheck`). See "Protecting Aviary consoles" in the docs.
+
 ## 0.9.2
 
 ### Patch Changes

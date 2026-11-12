@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz-drizzle",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Drizzle ORM RBAC persistence + query-scope compiler for @dudousxd/nestjs-authz — roles, permissions, a Gate seam, and gate.scope() → Drizzle WHERE (zero connection ownership).",
   "license": "MIT",
   "repository": {
@@ -43,7 +43,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@dudousxd/nestjs-authz": ">=0.9.0 <0.10.0",
+    "@dudousxd/nestjs-authz": ">=0.10.0",
     "@nestjs/authorization": "^0.1.3",
     "@nestjs/common": "^12.0.0",
     "@nestjs/core": "^12.0.0",

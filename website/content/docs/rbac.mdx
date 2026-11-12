@@ -303,7 +303,8 @@ AuthzRbacModule.forRoot({
 - With nested tenants (`Context.setTenant({ id: 'u1', kind: 'unit', chain: [clinic] })`), a role
   assigned in the clinic also counts inside its units, and the caller's role at each level is
   mapped by `roles`. `kinds` picks the levels: with `kinds: ['clinic', 'unit']` both count, with
-  `kinds: ['unit']` only the unit does.
+  `kinds: ['unit']` only the unit does. The level the request's tenant matched always counts,
+  since the context only matches a level whose kind is listed.
 - `required` turns a check with no tenant into a `TenantRequiredError` (403,
   `code: 'E_TENANT_REQUIRED'`) instead of a check in the global scope. Each package (context and
   every adapter) throws its own class, so match on `error.code === 'E_TENANT_REQUIRED'`, not

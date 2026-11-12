@@ -29,6 +29,7 @@ export type {
   UserRefMapper,
 } from './authz-rbac.module.js';
 export type { AuthzStoreOptions, RoleAssignmentScope, TableNames, TenantScope } from './types.js';
+export type { AuthzTenancyOption, TenantResolver } from './tenancy.js';
 export type { UserRef, UserRefInput } from '@dudousxd/nestjs-authz/store-kit';
 export { applyScope, applyScopeConstraint, compileScope } from './scope.js';
 export type { CompiledScope, ScopeResolver } from './scope.js';

@@ -11,17 +11,42 @@ import {
   roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import type { EntityManager, MikroORM } from '@mikro-orm/core';
-import { PermissionEntity, RoleEntity, RolePermissionEntity, UserRoleEntity } from './entities.js';
+import {
+  GLOBAL_TENANT,
+  PermissionEntity,
+  RoleEntity,
+  RolePermissionEntity,
+  UserRoleEntity,
+} from './entities.js';
 import { ensureAuthzSchema } from './schema.js';
 
 // These types appear in this store's public method signatures, so the package exports them
 // next to the store. They are defined once in core's store-kit.
 export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
-/** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
-export interface RoleSourceOptions {
+/**
+ * Optional tenant scope for a query. Omitted → the GLOBAL scope (only global assignments; a
+ * tenant-scoped role never leaks into an unscoped check). With a `tenantId`, global assignments
+ * AND that tenant's apply. Needs entities built with `tenantScoped: true`; without that column
+ * every assignment is global.
+ */
+export interface TenantScope {
+  tenantId?: string;
+}
+
+/**
+ * Assignment source (default `'manual'`, see `setUserRoles`) and tenant for role mutations.
+ * `tenantId` scopes the assignment to one tenant; it needs entities built with
+ * `createAuthzEntitySchemas(names, { tenantScoped: true })`.
+ */
+export interface RoleSourceOptions extends TenantScope {
   source?: string;
 }
+
+const TENANT_COLUMN_MISSING =
+  'MikroOrmAuthzStore: a tenant-scoped role assignment needs the tenantId column. Build the ' +
+  'entities with createAuthzEntitySchemas(names, { tenantScoped: true }) and widen the ' +
+  "user-role primary key (see the package README, 'Tenant-scoped roles').";
 
 /**
  * MikroORM-backed RBAC store. A plain POJO that receives the `EntityManager` in its
@@ -43,6 +68,36 @@ export class MikroOrmAuthzStore {
   /** Create/upgrade the RBAC tables (non-destructive, delegates to {@link ensureAuthzSchema}). */
   ensureSchema(): Promise<void> {
     return ensureAuthzSchema(this.em);
+  }
+
+  // --- tenant scoping ---
+
+  /** True when the user-role entity maps `tenantId` (built with `tenantScoped: true`). */
+  private tenantScoped(em: EntityManager): boolean {
+    return em.getMetadata().find(UserRoleEntity.name)?.properties.tenantId !== undefined;
+  }
+
+  /** The `tenantId` value of a written assignment (`{}` without the column). */
+  private tenantValue(em: EntityManager, tenantId: string | undefined): { tenantId?: string } {
+    if (this.tenantScoped(em)) return { tenantId: tenantId ?? GLOBAL_TENANT };
+    if (tenantId !== undefined && tenantId !== GLOBAL_TENANT) {
+      throw new Error(TENANT_COLUMN_MISSING);
+    }
+    return {};
+  }
+
+  /** Assignments visible in a scope: global ones, plus the tenant's own when one is given. */
+  private tenantWhere(em: EntityManager, scope: TenantScope | undefined): Record<string, unknown> {
+    if (!this.tenantScoped(em)) return {};
+    const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+    return tenantId === GLOBAL_TENANT
+      ? { tenantId: GLOBAL_TENANT }
+      : { tenantId: { $in: [GLOBAL_TENANT, tenantId] } };
+  }
+
+  /** The public `tenantId` of a stored row: `null` for a global assignment. */
+  private static rowTenant(row: UserRoleEntity & { tenantId?: string }): string | null {
+    return row.tenantId === undefined || row.tenantId === GLOBAL_TENANT ? null : row.tenantId;
   }
 
   // --- roles & permissions (idempotent upserts by name) ---
@@ -206,36 +261,46 @@ export class MikroOrmAuthzStore {
 
   /**
    * Assign a role to a user (creating the role by name if needed). Idempotent. `{ source }`
-   * (default `'manual'`) records where the assignment came from.
+   * (default `'manual'`) records where the assignment came from. `{ tenantId }` scopes it to that
+   * tenant; omitted, the assignment is global (applies in every tenant).
    */
   async assignRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
+    const em = this.em.fork();
+    const tenant = this.tenantValue(em, opts?.tenantId);
     const roleId = await this.createRole(roleName);
     const source = opts?.source ?? DEFAULT_ROLE_SOURCE;
-    const em = this.em.fork();
     const existing = await em.findOne(UserRoleEntity, {
       userType: type,
       userId: id,
       roleId,
       source,
+      ...tenant,
     });
     if (existing) return;
-    em.create(UserRoleEntity, { userType: type, userId: id, roleId, source });
+    em.create(UserRoleEntity, { userType: type, userId: id, roleId, source, ...tenant });
     await em.flush();
   }
 
   /**
    * Remove a role from a user. No-op if the role or assignment is absent. With `{ source }` only
-   * that source's assignment goes; without it, the role is removed from every source.
+   * that source's assignment goes; without it, the role is removed from every source. With
+   * tenant-scoped entities, `{ tenantId }` removes the assignment in that tenant and omitting it
+   * removes the global one.
    */
   async removeRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
+    const em = this.em.fork();
+    if (!this.tenantScoped(em) && opts?.tenantId !== undefined && opts.tenantId !== GLOBAL_TENANT) {
+      return; // no tenant column: there is no tenant-scoped assignment to remove
+    }
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
-    await this.em.fork().nativeDelete(UserRoleEntity, {
+    await em.nativeDelete(UserRoleEntity, {
       userType: type,
       userId: id,
       roleId,
+      ...this.tenantValue(em, opts?.tenantId),
       ...(opts?.source !== undefined ? { source: opts.source } : {}),
     });
   }
@@ -245,6 +310,8 @@ export class MikroOrmAuthzStore {
    * `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, mappedRoles, { source: 'sso' })`
    * on every login. Other sources' assignments are untouched, so a role held both manually and via
    * SSO survives an SSO sync that drops it. Roles are created by name when missing. Transactional.
+   * With tenant-scoped entities it replaces the assignments of one tenant (`{ tenantId }`), or the
+   * global ones when omitted.
    */
   async setUserRoles(
     user: UserRef,
@@ -253,29 +320,47 @@ export class MikroOrmAuthzStore {
   ): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const source = opts?.source ?? DEFAULT_ROLE_SOURCE;
+    const em = this.em.fork();
+    const tenant = this.tenantValue(em, opts?.tenantId);
     const roleIds: string[] = [];
     for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
-    await this.em.fork().transactional(async (tx) => {
-      await tx.nativeDelete(UserRoleEntity, { userType: type, userId: id, source });
+    await em.transactional(async (tx) => {
+      await tx.nativeDelete(UserRoleEntity, { userType: type, userId: id, source, ...tenant });
       for (const roleId of roleIds) {
-        tx.create(UserRoleEntity, { userType: type, userId: id, roleId, source });
+        tx.create(UserRoleEntity, { userType: type, userId: id, roleId, source, ...tenant });
       }
       await tx.flush();
     });
   }
 
-  /** Every role assignment of a user, one entry per `(role, source)`. */
-  async getRoleAssignments(user: UserRef): Promise<RoleAssignment[]> {
+  /**
+   * Every role assignment of a user visible in a tenant scope (global ones always; the tenant's
+   * own with `{ tenantId }`), one entry per `(role, source, tenant)`.
+   */
+  async getRoleAssignments(user: UserRef, scope?: TenantScope): Promise<RoleAssignment[]> {
     const { type, id } = normalizeUserRef(user);
     const em = this.em.fork();
-    const assignments = await em.find(UserRoleEntity, { userType: type, userId: id });
+    const assignments = await em.find(UserRoleEntity, {
+      userType: type,
+      userId: id,
+      ...this.tenantWhere(em, scope),
+    });
     if (assignments.length === 0) return [];
     const roles = await em.find(RoleEntity, { id: { $in: assignments.map((a) => a.roleId) } });
     const nameById = new Map(roles.map((r) => [r.id, r.name]));
     return assignments
       .filter((a) => nameById.has(a.roleId))
-      .map((a) => ({ role: nameById.get(a.roleId) as string, source: a.source, tenantId: null }))
-      .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
+      .map((a) => ({
+        role: nameById.get(a.roleId) as string,
+        source: a.source,
+        tenantId: MikroOrmAuthzStore.rowTenant(a),
+      }))
+      .sort(
+        (a, b) =>
+          a.role.localeCompare(b.role) ||
+          a.source.localeCompare(b.source) ||
+          (a.tenantId ?? '').localeCompare(b.tenantId ?? ''),
+      );
   }
 
   /**
@@ -283,13 +368,17 @@ export class MikroOrmAuthzStore {
    * a user's assignments with their sources (`{ user }`). `role` accepts one name or a list;
    * `user` and `source` narrow further. Ordered by `(userType, userId, role, source)`.
    *
-   * This adapter has no tenant-scoped assignments — every row is global (`tenantId: null`). So
-   * `tenantId: undefined` or `null` lists everything, and a tenant id string matches nothing.
+   * `tenantId`: omitted = no tenant filter; `null` = global assignments only; a string = exactly
+   * that tenant's scoped assignments. Without tenant-scoped entities every row is global
+   * (`tenantId: null`), so a tenant id string matches nothing.
    */
   async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
-    if (typeof filter.tenantId === 'string') return [];
     const em = this.em.fork();
     const where: Record<string, unknown> = {};
+    if (filter.tenantId !== undefined) {
+      if (this.tenantScoped(em)) where.tenantId = filter.tenantId ?? GLOBAL_TENANT;
+      else if (filter.tenantId !== null) return [];
+    }
     const roleNames = roleFilterNames(filter.role);
     if (roleNames !== undefined) {
       if (roleNames.length === 0) return [];
@@ -316,7 +405,7 @@ export class MikroOrmAuthzStore {
         userId: a.userId,
         role: nameById.get(a.roleId) as string,
         source: a.source,
-        tenantId: null,
+        tenantId: MikroOrmAuthzStore.rowTenant(a),
       }))
       .sort(compareUserRoleAssignments);
   }
@@ -332,13 +421,17 @@ export class MikroOrmAuthzStore {
 
   // --- queries ---
 
-  /** The role names a user holds. */
-  async getRolesForUser(user: UserRef): Promise<string[]> {
+  /** The role names a user holds, in a tenant scope (see {@link TenantScope}). */
+  async getRolesForUser(user: UserRef, scope?: TenantScope): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
     const em = this.em.fork();
-    const assignments = await em.find(UserRoleEntity, { userType: type, userId: id });
+    const assignments = await em.find(UserRoleEntity, {
+      userType: type,
+      userId: id,
+      ...this.tenantWhere(em, scope),
+    });
     if (assignments.length === 0) return [];
-    const roleIds = assignments.map((a) => a.roleId);
+    const roleIds = [...new Set(assignments.map((a) => a.roleId))];
     const roles = await em.find(RoleEntity, { id: { $in: roleIds } });
     return roles.map((r) => r.name);
   }
@@ -352,7 +445,7 @@ export class MikroOrmAuthzStore {
    * returned set is the FULL granted permission name set, deduped — callers (incl. the
    * wildcard matcher) rely on getting every granted name (e.g. a granted `posts.*`).
    */
-  async getPermissionsForUser(user: UserRef): Promise<string[]> {
+  async getPermissionsForUser(user: UserRef, scope?: TenantScope): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
     const em = this.em.fork();
 
@@ -380,6 +473,21 @@ export class MikroOrmAuthzStore {
     const urUserType = col(userRole, 'userType');
     const urUserId = col(userRole, 'userId');
 
+    // Tenant scope: global assignments, plus the tenant's own when one is given.
+    const params: string[] = [type, id];
+    let tenantSql = '';
+    if (this.tenantScoped(em)) {
+      const urTenant = col(userRole, 'tenantId');
+      const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+      if (tenantId === GLOBAL_TENANT) {
+        tenantSql = ` and ur.${urTenant} = ?`;
+        params.push(GLOBAL_TENANT);
+      } else {
+        tenantSql = ` and ur.${urTenant} in (?, ?)`;
+        params.push(GLOBAL_TENANT, tenantId);
+      }
+    }
+
     // Single round-trip: permission ← rolePermission ← userRole. Identifiers come from
     // entity metadata (trusted), values are bound as parameters (no SQL injection surface).
     const sql =
@@ -387,24 +495,28 @@ export class MikroOrmAuthzStore {
       `from ${permTable} p ` +
       `inner join ${rpTable} rp on rp.${rpPermId} = p.${permId} ` +
       `inner join ${urTable} ur on ur.${urRoleId} = rp.${rpRoleId} ` +
-      `where ur.${urUserType} = ? and ur.${urUserId} = ?`;
+      `where ur.${urUserType} = ? and ur.${urUserId} = ?${tenantSql}`;
 
-    const rows = (await em.getConnection().execute(sql, [type, id])) as Array<{ name: string }>;
+    const rows = (await em.getConnection().execute(sql, params)) as Array<{ name: string }>;
     return [...new Set(rows.map((r) => r.name))];
   }
 
-  /** A user's roles + effective permissions in one shot. */
-  async getUserAuthz(user: UserRef): Promise<UserAuthz> {
+  /** A user's roles + effective permissions in one shot, in a tenant scope. */
+  async getUserAuthz(user: UserRef, scope?: TenantScope): Promise<UserAuthz> {
     const [roles, permissions] = await Promise.all([
-      this.getRolesForUser(user),
-      this.getPermissionsForUser(user),
+      this.getRolesForUser(user, scope),
+      this.getPermissionsForUser(user, scope),
     ]);
     return { roles, permissions };
   }
 
-  /** True when the user holds `permission` through any of their roles. */
-  async userHasPermission(user: UserRef, permission: string): Promise<boolean> {
-    const permissions = await this.getPermissionsForUser(user);
+  /** True when the user holds `permission` through any of their roles, in a tenant scope. */
+  async userHasPermission(
+    user: UserRef,
+    permission: string,
+    scope?: TenantScope,
+  ): Promise<boolean> {
+    const permissions = await this.getPermissionsForUser(user, scope);
     return permissions.includes(permission);
   }
 }

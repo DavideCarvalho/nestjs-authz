@@ -10,7 +10,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // only way decorator-free EntitySchema metadata is registered with the v7 runtime. The
 // built package ships v6 as a devDependency, so a symlinked import would silently load v6.
 import { AuthzRbacModule } from '../../../packages/mikro-orm/src/authz-rbac.module.js';
-import { AUTHZ_ENTITIES, RoleEntity } from '../../../packages/mikro-orm/src/entities.js';
+import {
+  AUTHZ_ENTITIES,
+  RoleEntity,
+  createAuthzEntitySchemas,
+} from '../../../packages/mikro-orm/src/entities.js';
 import { MikroOrmAuthzStore } from '../../../packages/mikro-orm/src/mikro-orm-authz.store.js';
 import { AuthzRoleRepository } from '../../../packages/mikro-orm/src/repositories.js';
 import { authzSchemaSql, ensureAuthzSchema } from '../../../packages/mikro-orm/src/schema.js';
@@ -135,5 +139,30 @@ describe(`MikroOrmAuthzStore on MikroORM ${coreVersion} (integration, sqlite)`, 
     expect(await gate.forUser({ type: 'User', id: 'u2' }).hasRole('ADMIN')).toBe(false);
 
     await moduleRef.close();
+  });
+
+  it('tenant-scoped entities scope role assignments per tenant on v7', async () => {
+    const scoped = await MikroORM.init({
+      dbName: ':memory:',
+      entities: [...createAuthzEntitySchemas({}, { tenantScoped: true }).all],
+      allowGlobalContext: true,
+    });
+    try {
+      const tenantStore = new MikroOrmAuthzStore(scoped.em);
+      await tenantStore.ensureSchema();
+      await tenantStore.givePermissionToRole('editor', 'posts.publish');
+      await tenantStore.assignRole({ type: 'user', id: 1 }, 'editor', { tenantId: 'acme' });
+      await tenantStore.assignRole({ type: 'user', id: 1 }, 'editor', { tenantId: 'globex' });
+      expect(await tenantStore.getRolesForUser(1, { tenantId: 'acme' })).toEqual(['editor']);
+      expect(await tenantStore.getRolesForUser(1)).toEqual([]);
+      expect(await tenantStore.userHasPermission(1, 'posts.publish', { tenantId: 'globex' })).toBe(
+        true,
+      );
+      expect(await tenantStore.userHasPermission(1, 'posts.publish', { tenantId: 'other' })).toBe(
+        false,
+      );
+    } finally {
+      await scoped.close(true);
+    }
   });
 });

@@ -185,10 +185,70 @@ await store.listRoleAssignments({ user: { type: 'user', id: 7 } });
 await store.removeUser({ type: 'user', id: 7 });
 ```
 
-This adapter has no tenant-scoped assignments, so every row has `tenantId: null`:
-`listRoleAssignments({ tenantId: null })` lists everything and a tenant id string matches
-nothing. Without `roleSources: true` every row is `'manual'`, so filtering by another
-`source` matches nothing.
+`tenantId` filters: omitted = every tenant, `null` = global assignments only, a string = that
+tenant's scoped assignments only. Without `tenantScoped: true` (below) every row has
+`tenantId: null`, so a tenant id string matches nothing. Without `roleSources: true` every row
+is `'manual'`, so filtering by another `source` matches nothing.
+
+## Tenant-scoped roles
+
+Tenant-scoped assignments are opt-in. Add the column to `UserRole` and its `@@id`, then run
+`prisma migrate dev` (existing rows get `''`, a global assignment):
+
+```prisma
+model UserRole {
+  userType String
+  userId   String
+  roleId   String
+  tenantId String @default("")
+
+  @@id([userType, userId, roleId, tenantId])
+  @@index([userType, userId])
+  @@map("authz_user_role")
+}
+```
+
+Then turn it on: `new PrismaAuthzStore(prisma, { tenantScoped: true })`, or
+`AuthzRbacModule.forRoot({ client: prisma, tenantScoped: true })`.
+
+```ts
+await store.assignRole(user, 'editor', { tenantId: 'acme' }); // only inside acme
+await store.assignRole(user, 'viewer');                        // everywhere
+await store.getRolesForUser(user, { tenantId: 'acme' });      // ['editor', 'viewer']
+await store.getRolesForUser(user);                            // ['viewer']
+```
+
+`removeRole` and `setUserRoles` take the same `{ tenantId }` (omitted = the global
+assignments). Without `tenantScoped`, every assignment is global and reads ignore the tenant.
+`assignRole` and `setUserRoles` with a `tenantId` throw; `removeRole` with one does nothing,
+since there is no tenant assignment to remove.
+
+## Tenancy
+
+The RBAC module reads the tenant only when tenancy is on: turn it on with
+`ContextModule.forRoot({ tenancy: { enabled: true } })` in `@dudousxd/nestjs-context`. Checks
+are then scoped to the request's tenant from `Context.setTenant(...)`.
+A request with no tenant, or inside `Context.allTenants()`, sees global assignments only.
+
+```ts
+AuthzRbacModule.forRoot({
+  client: prisma,
+  tenantScoped: true,
+  tenancy: {
+    kinds: ['organization'],                  // optional: tenant kinds this module honours
+    roles: { owner: 'org_admin', member: 'org_member' }, // optional: tenant.role → authz roles in that tenant
+  },
+  tenant: (user) => (user as { orgId?: string }).orgId, // optional: an explicit tenant wins over the context
+});
+```
+
+`tenancy` defaults to `'inherit'` (follow the context switch); `false` keeps this module out.
+Roles mapped with `roles` apply only inside that tenant and only to the context's current user.
+The `tenant` resolver returns a tenant id, `null` for the global scope, or `undefined` to fall
+back to the context.
+
+With tenancy on and without `tenantScoped`, every assignment is global, so only `roles` and the
+`tenant` resolver change what a check sees.
 
 ## License
 

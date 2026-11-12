@@ -213,9 +213,73 @@ await store.listRoleAssignments({ user: { type: 'user', id: 7 } });
 await store.removeUser({ type: 'user', id: 7 });
 ```
 
-This adapter has no tenant-scoped assignments, so every row has `tenantId: null`:
-`listRoleAssignments({ tenantId: null })` lists everything and a tenant id string matches
-nothing.
+`tenantId` filters: omitted = every tenant, `null` = global assignments only, a string = that
+tenant's scoped assignments only. Without the tenant column (below) every row has
+`tenantId: null`, so a tenant id string matches nothing.
+
+## Tenant-scoped roles
+
+Build the entities with `tenantScoped: true` to assign roles per tenant. The user-role table
+gets a `tenant_id` column (default `''`, a global assignment) in its primary key:
+
+```ts
+import { createAuthzEntitySchemas } from '@dudousxd/nestjs-authz-mikro-orm';
+
+const authz = createAuthzEntitySchemas({}, { tenantScoped: true }); // or your own table names
+MikroOrmModule.forRoot({ entities: [...authz.all /* , your entities */] });
+
+await store.assignRole(user, 'editor', { tenantId: 'acme' }); // only inside acme
+await store.assignRole(user, 'viewer');                        // everywhere
+await store.getRolesForUser(user, { tenantId: 'acme' });      // ['editor', 'viewer']
+await store.getRolesForUser(user);                            // ['viewer']
+```
+
+`removeRole` and `setUserRoles` take the same `{ tenantId }` (omitted = the global
+assignments). Without `tenantScoped`, every assignment is global and reads ignore the tenant.
+`assignRole` and `setUserRoles` with a `tenantId` throw; `removeRole` with one does nothing,
+since there is no tenant assignment to remove.
+
+### Migrating an existing database
+
+`ensureAuthzSchema` / `autoCreateSchema` (or `authzSchemaSql` in a migration) add the `tenant_id`
+column, so existing rows become global assignments. Widen the primary key once, so the same role
+can be assigned in two tenants:
+
+```sql
+-- PostgreSQL (default constraint name; check yours with \d authz_user_role)
+ALTER TABLE authz_user_role DROP CONSTRAINT authz_user_role_pkey,
+  ADD PRIMARY KEY (user_type, user_id, role_id, source, tenant_id);
+-- MySQL
+ALTER TABLE authz_user_role DROP PRIMARY KEY,
+  ADD PRIMARY KEY (user_type, user_id, role_id, source, tenant_id);
+-- SQLite: recreate the table with the 5-column key (SQLite cannot alter a primary key).
+```
+
+## Tenancy
+
+The RBAC module reads the tenant only when tenancy is on: turn it on with
+`ContextModule.forRoot({ tenancy: { enabled: true } })` in `@dudousxd/nestjs-context`. Checks
+are then scoped to the request's tenant from `Context.setTenant(...)`.
+A request with no tenant, or inside `Context.allTenants()`, sees global assignments only.
+
+```ts
+AuthzRbacModule.forRoot({
+  store,
+  tenancy: {
+    kinds: ['organization'],                  // optional: tenant kinds this module honours
+    roles: { owner: 'org_admin', member: 'org_member' }, // optional: tenant.role → authz roles in that tenant
+  },
+  tenant: (user) => (user as { orgId?: string }).orgId, // optional: an explicit tenant wins over the context
+});
+```
+
+`tenancy` defaults to `'inherit'` (follow the context switch); `false` keeps this module out.
+Roles mapped with `roles` apply only inside that tenant and only to the context's current user.
+The `tenant` resolver returns a tenant id, `null` for the global scope, or `undefined` to fall
+back to the context.
+
+With tenancy on and the default entities, every assignment is global, so only `roles` and the
+`tenant` resolver change what a check sees.
 
 ## License
 

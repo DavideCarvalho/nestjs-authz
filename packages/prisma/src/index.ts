@@ -5,11 +5,12 @@ export {
   type PrismaAuthzStoreOptions,
   type PrismaModelDelegate,
 } from './prisma-client.js';
-export { PrismaAuthzStore } from './prisma-authz.store.js';
+export { GLOBAL_TENANT, PrismaAuthzStore } from './prisma-authz.store.js';
 export type {
   RoleAssignment,
   RoleAssignmentFilter,
   RoleSourceOptions,
+  TenantScope,
   UserAuthz,
   UserRoleAssignment,
 } from './prisma-authz.store.js';
@@ -24,6 +25,7 @@ export type {
   AuthzRbacModuleOptions,
   UserRefMapper,
 } from './authz-rbac.module.js';
+export type { AuthzTenancyOption, TenantResolver } from './tenancy.js';
 export type { UserRef, UserRefInput } from '@dudousxd/nestjs-authz/store-kit';
 export { applyScope, compileScope } from './scope.js';
 export type { PrismaWhere, ScopeResolver } from './scope.js';

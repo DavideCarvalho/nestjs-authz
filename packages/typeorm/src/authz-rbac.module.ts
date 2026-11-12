@@ -18,6 +18,13 @@ import {
   type Type,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import {
+  type AuthzTenancyOption,
+  type RbacTenant,
+  type TenantContextAccessor,
+  type TenantResolver,
+  rbacTenant,
+} from './tenancy.js';
 import { TypeOrmAuthzStore } from './typeorm-authz.store.js';
 import type { AuthzStoreOptions } from './types.js';
 
@@ -43,6 +50,17 @@ export interface AuthzRbacModuleBaseOptions {
    * {@link defaultUserRefMapper} (`{ type, id }` or `{ id }`).
    */
   userRefFrom?: UserRefMapper;
+  /**
+   * Tenancy, from `@dudousxd/nestjs-context`. `'inherit'` (default) follows `ContextModule`'s
+   * `tenancy.enabled`; with it on, checks are scoped to the context tenant. The object form adds
+   * `kinds` and `roles` (map the caller's `tenant.role` to authz roles in that tenant).
+   */
+  tenancy?: AuthzTenancyOption;
+  /**
+   * Explicit tenant for a check, from the user being checked. Wins over the context: return a
+   * tenant id, `null` for the global scope, or `undefined` to fall back to the context.
+   */
+  tenant?: TenantResolver;
 }
 
 /**
@@ -116,52 +134,6 @@ function connectionToken(name: string): unknown {
   return official.getDataSourceToken(name);
 }
 
-/**
- * Minimal structural mirror of nestjs-context's accessor — just the `tenantId()`
- * we read. Injected via the shared {@link CONTEXT_ACCESSOR} token with `@Optional()`,
- * so RBAC stays decoupled from nestjs-context (works with or without it).
- */
-interface TenantContextAccessor {
-  tenantId?: () => string | undefined;
-}
-
-/** Read the current tenant from the (optional) context accessor, defensively. */
-function tenantScopeFrom(context: TenantContextAccessor | undefined): { tenantId?: string } {
-  if (!context || typeof context.tenantId !== 'function') return {};
-  let tenantId: string | undefined;
-  try {
-    tenantId = context.tenantId();
-  } catch {
-    tenantId = undefined;
-  }
-  return tenantId == null ? {} : { tenantId };
-}
-
-/**
- * Locate the context accessor for tenant scoping. Prefers a value injected into
- * this module; falls back to a non-strict {@link ModuleRef} lookup so an accessor
- * provided by ANY module (the app root, a global ContextModule) is still found —
- * the RBAC module is global and its providers don't import the app's modules, so a
- * plain `@Inject` would miss a root-provided accessor. Mirrors the Gate's seam.
- */
-function resolveTenantContext(
-  injected: TenantContextAccessor | undefined,
-  moduleRef: ModuleRef | undefined,
-  cache: { resolved: boolean; value: TenantContextAccessor | undefined },
-): TenantContextAccessor | undefined {
-  if (injected) return injected;
-  if (cache.resolved) return cache.value;
-  cache.resolved = true;
-  if (moduleRef) {
-    try {
-      cache.value = moduleRef.get<TenantContextAccessor>(CONTEXT_ACCESSOR, { strict: false });
-    } catch {
-      cache.value = undefined;
-    }
-  }
-  return cache.value;
-}
-
 /** Default mapping: accept a `{ type, id }` ref, a `{ id }` object, or a bare id. */
 export function defaultUserRefMapper(user: unknown): UserRef | undefined {
   if (user == null) return undefined;
@@ -193,8 +165,22 @@ class RbacPermissionProvider implements PermissionProvider {
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
-  private scope(): { tenantId?: string } {
-    return tenantScopeFrom(resolveTenantContext(this.context, this.moduleRef, this.contextCache));
+  private tenant(user: unknown, ref: UserRef): RbacTenant {
+    return rbacTenant(
+      this.options,
+      user,
+      ref,
+      this.context,
+      this.moduleRef,
+      this.contextCache,
+      true,
+    );
+  }
+
+  /** The permissions `tenancy.roles` grants through the caller's role in the tenant. */
+  private async tenantRolePermissions(roles: string[]): Promise<string[]> {
+    if (roles.length === 0) return [];
+    return Object.values(await this.options.store.getRolePermissions(roles)).flat();
   }
 
   // The core `PermissionProvider` interface passes an optional `resource` (3rd
@@ -207,7 +193,9 @@ class RbacPermissionProvider implements PermissionProvider {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.userHasPermission(ref, permission, this.scope());
+    const tenant = this.tenant(user, ref);
+    if (await this.options.store.userHasPermission(ref, permission, tenant.scope)) return true;
+    return (await this.tenantRolePermissions(tenant.roles)).includes(permission);
   }
 
   // Expose the user's full granted permission set so the core can apply
@@ -218,7 +206,10 @@ class RbacPermissionProvider implements PermissionProvider {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.getPermissionsForUser(ref, this.scope());
+    const tenant = this.tenant(user, ref);
+    const own = await this.options.store.getPermissionsForUser(ref, tenant.scope);
+    if (tenant.roles.length === 0) return own;
+    return [...new Set([...own, ...(await this.tenantRolePermissions(tenant.roles))])];
   }
 }
 
@@ -245,12 +236,19 @@ class RbacRoleProvider implements RoleProvider {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    // Scope roles by the current tenant (when nestjs-context is present): a
-    // tenant-scoped role only counts within its tenant; global roles always count.
-    const scope = tenantScopeFrom(
-      resolveTenantContext(this.context, this.moduleRef, this.contextCache),
+    // Scope roles by the current tenant: a tenant-scoped role only counts within its
+    // tenant; global roles always count. `tenancy.roles` adds the caller's tenant roles.
+    const tenant = rbacTenant(
+      this.options,
+      user,
+      ref,
+      this.context,
+      this.moduleRef,
+      this.contextCache,
+      true,
     );
-    return this.options.store.getRolesForUser(ref, scope);
+    const own = await this.options.store.getRolesForUser(ref, tenant.scope);
+    return tenant.roles.length === 0 ? own : [...new Set([...own, ...tenant.roles])];
   }
 }
 

@@ -135,6 +135,26 @@ With `@dudousxd/nestjs-context` installed, the module reads the current tenant f
 accessor. A tenant-scoped role then grants only inside its own tenant. Global roles and direct
 grants apply everywhere.
 
+With tenancy on (`ContextModule.forRoot({ tenancy: { enabled: true } })` in
+`@dudousxd/nestjs-context`), checks are scoped to the request's tenant from `Context.setTenant(...)`.
+A request with no tenant, or inside `Context.allTenants()`, sees global assignments only.
+
+```ts
+AuthzRbacModule.forRoot({
+  connectionName: 'default',
+  tenancy: {
+    kinds: ['organization'],                  // optional: tenant kinds this module honours
+    roles: { owner: 'org_admin', member: 'org_member' }, // optional: tenant.role → authz roles in that tenant
+  },
+  tenant: (user) => (user as { orgId?: string }).orgId, // optional: an explicit tenant wins over the context
+});
+```
+
+`tenancy` defaults to `'inherit'` (follow the context switch); `false` keeps this module out.
+Roles mapped with `roles` apply only inside that tenant and only to the context's current user.
+The `tenant` resolver returns a tenant id, `null` for the global scope, or `undefined` to fall
+back to the context.
+
 To run the store inside your own transaction, use `store.withDb(tx)`.
 
 ## Schema

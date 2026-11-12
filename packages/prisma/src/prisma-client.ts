@@ -47,8 +47,10 @@
  *   roleId   String
  *   // Only with `roleSources: true` (per-source assignments — see PrismaAuthzStore.setUserRoles):
  *   // source String @default("manual")
+ *   // Only with `tenantScoped: true` (tenant-scoped assignments, '' = global):
+ *   // tenantId String @default("")
  *
- *   @@id([userType, userId, roleId])          // with roleSources: @@id([userType, userId, roleId, source])
+ *   @@id([userType, userId, roleId])          // add `tenantId` and/or `source` to the @@id when enabled
  *   @@index([userType, userId])
  *   @@map("authz_user_role")
  * }
@@ -143,6 +145,13 @@ export interface PrismaAuthzStoreOptions {
    * `setUserRoles(…, { source })` for a non-default source throw.
    */
   roleSources?: boolean;
+  /**
+   * Tenant-scoped role assignments. Requires a `tenantId String @default("")` column on the
+   * `UserRole` model, included in its `@@id` (`''` = a global assignment). Default `false`: the
+   * schema keeps working unchanged, every assignment is global, and a `tenantId` on a write
+   * throws.
+   */
+  tenantScoped?: boolean;
 }
 
 /** DI token for optional {@link PrismaAuthzStoreOptions}. */

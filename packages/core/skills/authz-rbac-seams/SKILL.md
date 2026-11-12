@@ -92,9 +92,13 @@ forced by `runInTenantScope` (the dev tools) first; then its `tenant`
 resolver (`(user) => id | null | undefined`); then, with tenancy on (`tenancy: 'inherit'`
 follows `ContextModule.forRoot({ tenancy: { enabled: true } })`; `false` opts out), the context
 tenant from `Context.setTenant`; with tenancy off, TypeORM/Drizzle read `Context.tenantId()` and
-MikroORM/Prisma check global assignments only. `tenancy: { roles: { owner: 'org_admin' } }` maps
-the caller's `tenant.role` to authz roles in that tenant only (context user only). No tenant,
-`allTenants` or no request = global assignments only.
+MikroORM/Prisma check global assignments only. With nested tenants, assignments held at every
+level of the active chain the module honours apply (`tenancy.kinds`, else the context's `kinds`;
+`tenancy.family` narrows to one family). `tenancy: { roles: { owner: 'org_admin' } }` maps
+the caller's `tenant.role` at each honoured level to authz roles (context user only). No tenant,
+`allTenants` or no request = global assignments only, unless `tenancy.required` (default: the
+context's) is set — then a check with no tenant throws `TenantRequiredError` (403,
+`E_TENANT_REQUIRED`).
 
 ## Core patterns
 

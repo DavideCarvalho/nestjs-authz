@@ -37,7 +37,7 @@ See [`DESIGN.md`](https://github.com/DavideCarvalho/nestjs-authz/blob/main/DESIG
 pnpm add @nestjs/authorization @dudousxd/nestjs-authz
 ```
 
-Requires NestJS 12 and Node 22+. Two optional peers: `@nestjs/authentication` gives the `Gate`
+Requires NestJS 12 and Node 24+. Two optional peers: `@nestjs/authentication` gives the `Gate`
 its ambient user (`AuthenticationContext.user`); `@dudousxd/nestjs-context` gives it one too
 (outside an authentication scope), plus the per-request permission cache and
 tenant-scoped roles.

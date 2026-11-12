@@ -28,7 +28,7 @@ frontend glue. It never authenticates.
 pnpm add @nestjs/authorization @dudousxd/nestjs-authz
 ```
 
-NestJS 12, Node 22+. Peers: `@nestjs/common`, `@nestjs/core`, `@nestjs/authorization`,
+NestJS 12, Node 24+. Peers: `@nestjs/common`, `@nestjs/core`, `@nestjs/authorization`,
 `reflect-metadata`, `rxjs`; optional `@nestjs/authentication` and `@dudousxd/nestjs-context`.
 
 ```ts

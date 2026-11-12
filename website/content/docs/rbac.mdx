@@ -344,7 +344,8 @@ AuthzRbacModule.forRoot({ client: prisma, tenantScoped: true });
 
 Existing rows become global assignments. On an existing MikroORM table, widen the primary key so
 the same role can be assigned in two tenants; the MikroORM README has the SQL. Without the column,
-every assignment stays global and a write with a `tenantId` throws.
+every assignment stays global: `assignRole` and `setUserRoles` with a `tenantId` throw, and
+`removeRole` with one does nothing.
 
 ## How it fits together
 

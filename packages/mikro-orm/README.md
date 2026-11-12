@@ -235,8 +235,9 @@ await store.getRolesForUser(user);                            // ['viewer']
 ```
 
 `removeRole` and `setUserRoles` take the same `{ tenantId }` (omitted = the global
-assignments). Without `tenantScoped`, every assignment is global, reads ignore the tenant, and a
-write with a `tenantId` throws.
+assignments). Without `tenantScoped`, every assignment is global and reads ignore the tenant.
+`assignRole` and `setUserRoles` with a `tenantId` throw; `removeRole` with one does nothing,
+since there is no tenant assignment to remove.
 
 ### Migrating an existing database
 

@@ -14,7 +14,7 @@ import type { PrismaAuthzClientLike, PrismaModelDelegate } from '../../src/prism
  */
 
 /** Documented `@@map` table names per Prisma model. */
-const TABLE: Record<'role' | 'permission' | 'rolePermission' | 'userRole', string> = {
+export const TABLE: Record<'role' | 'permission' | 'rolePermission' | 'userRole', string> = {
   role: 'authz_roles',
   permission: 'authz_permissions',
   rolePermission: 'authz_role_permission',
@@ -52,7 +52,7 @@ function buildWhere(where: Where): { text: string; values: unknown[] } {
 }
 
 /** A real pg-backed model delegate for one table. */
-function makeDelegate(pool: Pool, table: string): PrismaModelDelegate {
+export function makeDelegate(pool: Pool, table: string): PrismaModelDelegate {
   const tbl = quoteId(table);
   return {
     async create(args: { data: Row }) {

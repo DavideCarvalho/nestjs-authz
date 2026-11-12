@@ -69,10 +69,16 @@ export function makeFakeClient(opts: { rawQuery?: boolean | 'throw' } = {}): Pri
     // The store only ever calls `$queryRaw` with the permission JOIN whose bound
     // params, in order, are `[userType, userId]`. We don't parse the SQL — we
     // reproduce the join's result from the in-memory rows.
-    client.$queryRaw = (async <T = unknown>(
+    // A plain `function` (not an arrow) that requires `this === client`, like the real
+    // `PrismaClient.$queryRaw`: a store that calls it detached from the client fails here.
+    client.$queryRaw = async function <T = unknown>(
+      this: unknown,
       _query: TemplateStringsArray,
       ...values: unknown[]
-    ): Promise<T> => {
+    ): Promise<T> {
+      if (this !== client) {
+        throw new TypeError('$queryRaw called without the client as `this`');
+      }
       if (rawQuery === 'throw') {
         throw new Error('simulated $queryRaw failure');
       }
@@ -94,7 +100,7 @@ export function makeFakeClient(opts: { rawQuery?: boolean | 'throw' } = {}): Pri
           .map((p) => p.name as string),
       );
       return [...names].map((name) => ({ name })) as T;
-    }) as PrismaAuthzClientLike['$queryRaw'];
+    } as PrismaAuthzClientLike['$queryRaw'];
   }
 
   return client;

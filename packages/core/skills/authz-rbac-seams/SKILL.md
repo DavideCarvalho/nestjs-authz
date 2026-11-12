@@ -95,10 +95,11 @@ tenant from `Context.setTenant`; with tenancy off, TypeORM/Drizzle read `Context
 MikroORM/Prisma check global assignments only. With nested tenants, assignments held at every
 level of the active chain the module honours apply (`tenancy.kinds`, else the context's `kinds`;
 `tenancy.family` narrows to one family). `tenancy: { roles: { owner: 'org_admin' } }` maps
-the caller's `tenant.role` at each honoured level to authz roles (context user only). No tenant,
-`allTenants` or no request = global assignments only, unless `tenancy.required` (default: the
+the caller's `tenant.role` at each honoured level to authz roles (context user only). No tenant
+(`tenantless`) or no request = global assignments only, unless `tenancy.required` (default: the
 context's) is set — then a check with no tenant throws `TenantRequiredError` (403,
-`E_TENANT_REQUIRED`).
+`E_TENANT_REQUIRED`). `all`/`system` (`Context.allTenants()` and siblings) stay global even
+when required.
 
 ## Core patterns
 

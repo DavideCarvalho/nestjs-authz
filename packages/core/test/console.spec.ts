@@ -94,11 +94,19 @@ describe('AuthzConsoleGate.allows(name, context)', () => {
     });
   });
 
-  it('rejects a gate name the Gate cannot resolve (a configuration error)', async () => {
+  it('denies (fail-closed) a gate name the Gate cannot resolve, without throwing', async () => {
     const consoleGate = await boot();
-    await expect(
-      consoleGate.allows('nope', httpContext(asUser({ id: 1, admin: true }))),
-    ).rejects.toThrow(/could not be resolved/);
+    expect(await consoleGate.allows('nope', httpContext(asUser({ id: 1, admin: true })))).toBe(
+      false,
+    );
+  });
+
+  it('returns a fresh denial object on every call', async () => {
+    const consoleGate = await boot();
+    const first = await consoleGate.allows('console.durable', httpContext());
+    const second = await consoleGate.allows('console.durable', httpContext());
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
   });
 
   it('reads request.user with the default getUser', async () => {
@@ -126,6 +134,32 @@ describe('AuthzConsoleGate.allows(name, context)', () => {
     gate.define('console.x', (user) => (user as { id?: number } | null)?.id === 9);
     const consoleGate = mod.get<AuthzConsoleGate>(CONSOLE_GATE);
     expect(await consoleGate.allows('console.x', httpContext())).toBe(true);
+  });
+
+  it('never promotes an explicit guest (getUser answered null or false) to the ambient user', async () => {
+    const accessor: ContextAccessor = {
+      traceId: () => undefined,
+      tenantId: () => undefined,
+      userRef: () => ({ type: 'user', id: 9 }),
+      get: () => ({}),
+    };
+    for (const answer of [null, false]) {
+      const mod = await Test.createTestingModule({
+        imports: [
+          AuthorizationModule.forRoot({ getUser: () => answer }),
+          AuthzModule.forRoot({ resolveUser: (ref) => ({ id: ref.id }) }),
+        ],
+        providers: [{ provide: CONTEXT_ACCESSOR, useValue: accessor }],
+      }).compile();
+      mod.useLogger(false);
+      await mod.init();
+      mod.get(Gate).define('console.x', (user) => (user as { id?: number } | null)?.id === 9);
+      const consoleGate = mod.get<AuthzConsoleGate>(CONSOLE_GATE);
+      expect(await consoleGate.allows('console.x', httpContext())).toEqual({
+        allowed: false,
+        reason: 'unauthenticated',
+      });
+    }
   });
 });
 

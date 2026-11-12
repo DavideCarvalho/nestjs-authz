@@ -4,7 +4,15 @@ import {
   type AuthorizationModuleOptions,
   defaultGetUser,
 } from '@nestjs/authorization';
-import { type ExecutionContext, Inject, Injectable, Optional, type Type } from '@nestjs/common';
+import {
+  type ExecutionContext,
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+  type Type,
+} from '@nestjs/common';
+import { AbilityNotResolvedException } from './errors/exceptions.js';
 import { Gate } from './gate.js';
 import { PermissionPolicy } from './policies/permission.policy.js';
 import { RolePolicy } from './policies/role.policy.js';
@@ -46,7 +54,11 @@ export type ConsoleAuthorize =
  */
 export const CONSOLE_GATE = Symbol.for('@dudousxd/aviary:console-gate');
 
-const UNAUTHENTICATED = { allowed: false, reason: 'unauthenticated' } as const;
+/** A fresh denial per call, so no caller can mutate a shared result. */
+const unauthenticated = (): ConsoleAuthorizeResult => ({
+  allowed: false,
+  reason: 'unauthenticated',
+});
 
 /**
  * Answers console checks with the `Gate`, for the user the authorization guard sees:
@@ -55,6 +67,8 @@ const UNAUTHENTICATED = { allowed: false, reason: 'unauthenticated' } as const;
  */
 @Injectable()
 export class AuthzConsoleGate {
+  private readonly logger = new Logger('AuthzConsoleGate');
+
   constructor(
     private readonly gate: Gate,
     private readonly rbac: AuthzRbac,
@@ -67,16 +81,30 @@ export class AuthzConsoleGate {
   async userOf(context: ExecutionContext): Promise<User> {
     const getUser = this.official?.getUser ?? defaultGetUser;
     const user = await getUser(context);
-    if (user !== undefined && user !== null && user !== false) return user;
+    // The official contract: only `undefined` means "not answered here, look further".
+    // `null` (and Passport's `false`) is an answer: a guest, never promoted to the ambient user.
+    if (user === null || user === false) return null;
+    if (user !== undefined) return user;
     return (await this.rbac.currentUser()) ?? null;
   }
 
   /**
    * `gate.forUser(user).allows(name)`; a denied guest is `unauthenticated`. A name the `Gate`
-   * cannot resolve rejects with `AbilityNotResolvedException` (consoles deny and log it).
+   * cannot resolve denies (fail-closed) and logs a warning, so a typo'd gate name shows up in
+   * the logs instead of becoming a 500.
    */
   async allows(name: string, context: ExecutionContext): Promise<ConsoleAuthorizeResult> {
-    return this.check(context, (user) => this.gate.forUser(user).allows(name));
+    return this.check(context, async (user) => {
+      try {
+        return await this.gate.forUser(user).allows(name);
+      } catch (error) {
+        if (!(error instanceof AbilityNotResolvedException)) throw error;
+        this.logger.warn(
+          `console authorize: gate "${name}" resolves to nothing (no \`gate.define('${name}', …)\`, policy or permission); denying.`,
+        );
+        return false;
+      }
+    });
   }
 
   /** @internal Runs `test` for the call's user and turns the answer into a console result. */
@@ -86,7 +114,7 @@ export class AuthzConsoleGate {
   ): Promise<ConsoleAuthorizeResult> {
     const user = await this.userOf(context);
     if (await test(user)) return true;
-    return user === null ? UNAUTHENTICATED : false;
+    return user === null ? unauthenticated() : false;
   }
 }
 
@@ -175,7 +203,7 @@ export function authorizeByToken(options: {
     }>()?.headers?.authorization;
     const value = Array.isArray(header) ? header[0] : header;
     const match = typeof value === 'string' ? /^Bearer\s+(.+)$/i.exec(value.trim()) : null;
-    if (!match?.[1]) return UNAUTHENTICATED;
-    return timingSafeEqual(sha256(match[1]), expected) ? true : UNAUTHENTICATED;
+    if (!match?.[1]) return unauthenticated();
+    return timingSafeEqual(sha256(match[1]), expected) ? true : unauthenticated();
   };
 }

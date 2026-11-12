@@ -63,7 +63,7 @@ export class ConsoleGates implements OnModuleInit {
 ```
 
 Any string ability the `Gate` resolves works: an ad-hoc gate, a persisted permission, or a policy
-ability. A name that resolves to nothing denies the request and is logged.
+ability. A name that resolves to nothing denies the request (never a 500) and logs a warning.
 
 ## By official policy
 

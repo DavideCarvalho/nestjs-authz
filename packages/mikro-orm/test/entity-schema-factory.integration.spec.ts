@@ -68,6 +68,8 @@ describe('createAuthzEntitySchemas (integration, sqlite)', () => {
 describe('createAuthzEntitySchemas table name validation', () => {
   it('rejects a custom table name that is not a safe identifier, before registering anything', () => {
     expect(() => createAuthzEntitySchemas({ roles: 'app.roles' })).toThrow(/table name "roles"/);
-    expect(() => createAuthzEntitySchemas({ userRole: 'user_role|x' })).toThrow(/table name "userRole"/);
+    expect(() => createAuthzEntitySchemas({ userRole: 'user_role|x' })).toThrow(
+      /table name "userRole"/,
+    );
   });
 });

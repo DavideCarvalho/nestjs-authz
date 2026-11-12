@@ -9,6 +9,7 @@
     "current-user",
     "resource-resolution",
     "rbac",
+    "consoles",
     "external-engines",
     "ecosystem"
   ]

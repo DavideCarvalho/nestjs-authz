@@ -1,4 +1,4 @@
-export const VERSION = '2.0.0';
+export const VERSION = '0.3.0';
 
 export { AuthzInertiaModule } from './module.js';
 export { AuthzInertiaInterceptor } from './authz-inertia.interceptor.js';

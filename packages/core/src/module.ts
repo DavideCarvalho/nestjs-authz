@@ -18,6 +18,7 @@ import { AuthzGuard, AuthzGuardStartupCheck } from './authz.guard.js';
 import { DEFAULT_CAN_ENDPOINT_PATH, createCanController } from './can-endpoint.controller.js';
 import { AuthzConsoleGate, CONSOLE_GATE } from './console.js';
 import { AuthzDecisionPublisher } from './decisions.js';
+import { AuthzDevTools } from './dev-tools.js';
 import { Gate } from './gate.js';
 import { OFFICIAL_CAN_ANYONE_METADATA } from './official.js';
 import { GatePolicy } from './policies/gate.policy.js';
@@ -165,6 +166,7 @@ export class AuthzModule {
       AuthzGuard,
       AuthzRuntimeBootstrap,
       AuthzDecisionPublisher,
+      AuthzDevTools,
       { provide: APP_INTERCEPTOR, useExisting: AuthzDecisionPublisher },
     ];
   }

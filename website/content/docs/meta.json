@@ -10,6 +10,7 @@
     "resource-resolution",
     "rbac",
     "consoles",
+    "mcp-tools",
     "external-engines",
     "ecosystem",
     "upgrading"

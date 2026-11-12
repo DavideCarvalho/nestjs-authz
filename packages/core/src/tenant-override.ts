@@ -1,0 +1,46 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * An explicit tenant scope for every RBAC lookup made inside {@link runInTenantScope}: what the
+ * `authz_explain_check` dev tool uses to ask "in tenant T" without a request in that tenant.
+ *
+ * The storage lives in a process-wide slot so the store adapters read it STRUCTURALLY
+ * (`globalThis[Symbol.for('@dudousxd/nestjs-authz:tenant-scope')].storage.getStore()`) without
+ * importing this package's newer exports. An adapter that predates it ignores the override.
+ */
+export const TENANT_SCOPE_SLOT = Symbol.for('@dudousxd/nestjs-authz:tenant-scope');
+
+/** The forced scope: a tenant id, or `null` for the global scope. */
+export interface TenantScopeOverride {
+  tenantId: string | null;
+}
+
+interface TenantScopeSlot {
+  readonly version: 1;
+  readonly storage: AsyncLocalStorage<TenantScopeOverride>;
+}
+
+function slot(): TenantScopeSlot {
+  const holder = globalThis as Record<symbol, unknown>;
+  const existing = holder[TENANT_SCOPE_SLOT] as TenantScopeSlot | undefined;
+  if (existing?.version === 1 && existing.storage instanceof AsyncLocalStorage) return existing;
+  const created: TenantScopeSlot = { version: 1, storage: new AsyncLocalStorage() };
+  holder[TENANT_SCOPE_SLOT] = created;
+  return created;
+}
+
+/**
+ * Run `fn` with every RBAC role/permission lookup scoped to `tenantId` (`null` = the global
+ * scope), ahead of the adapter's `tenant` resolver and the context tenant.
+ */
+export function runInTenantScope<T>(tenantId: string | null, fn: () => T): T {
+  return slot().storage.run({ tenantId }, fn);
+}
+
+/** The forced scope of the current call, or `undefined` outside {@link runInTenantScope}. */
+export function currentTenantScopeOverride(): TenantScopeOverride | undefined {
+  const existing = (globalThis as Record<symbol, unknown>)[TENANT_SCOPE_SLOT] as
+    | TenantScopeSlot
+    | undefined;
+  return existing?.storage?.getStore();
+}

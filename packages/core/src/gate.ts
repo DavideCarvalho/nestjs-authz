@@ -49,6 +49,23 @@ interface Decision {
   allowed: boolean;
   reason: AuthzDecisionReason;
   policy: string | null;
+  /** The decision provider's reason, when it gave one. */
+  message?: string;
+}
+
+/** What {@link Gate.explainFor} answers. */
+export interface GateExplanation {
+  allowed: boolean;
+  /** The resolution path that decided, or `'unresolved'` when nothing defines the ability. */
+  reason: AuthzDecisionReason | 'unresolved';
+  /** The policy class that decided, or `null`. */
+  policy: string | null;
+  /** The decision provider's message, or the error when the ability could not be resolved. */
+  message?: string;
+  /** `superAdmin` granted it. */
+  superAdmin: boolean;
+  /** What the external decision point said; `'none'` without one. */
+  decisionProvider: 'none' | 'not-consulted' | 'allowed' | 'denied' | 'abstained';
 }
 
 /** A verdict the external decision point already gave for a batch item. */
@@ -265,6 +282,45 @@ export class Gate {
     return out;
   }
 
+  /**
+   * How a string ability check for `user` is decided, step by step, with no decision event
+   * published: the `authz_explain_check` dev tool. `cache` defaults to a fresh one, so the
+   * answer never reuses the request's fetches. An ability nothing defines answers
+   * `{ allowed: false, reason: 'unresolved' }` instead of throwing.
+   */
+  async explainFor(
+    user: User,
+    ability: string,
+    resource?: Resource,
+    cache: PermissionCache = new PermissionCache(),
+  ): Promise<GateExplanation> {
+    let decision: Omit<Decision, 'reason'> & { reason: GateExplanation['reason'] };
+    try {
+      decision = await this.decideString(user, ability, resource, cache, false, undefined);
+    } catch (error) {
+      const unresolved =
+        error instanceof AbilityNotResolvedException || error instanceof AmbiguousAbilityException;
+      if (!unresolved) throw error;
+      decision = { allowed: false, reason: 'unresolved', policy: null, message: error.message };
+    }
+    const superAdmin = decision.reason === 'super-admin';
+    let decisionProvider: GateExplanation['decisionProvider'] = 'none';
+    if (this.rbac.decisions()) {
+      if (superAdmin) decisionProvider = 'not-consulted';
+      else if (decision.reason === 'decision-provider')
+        decisionProvider = decision.allowed ? 'allowed' : 'denied';
+      else decisionProvider = 'abstained';
+    }
+    return {
+      allowed: decision.allowed,
+      reason: decision.reason,
+      policy: decision.policy,
+      ...(decision.message !== undefined ? { message: decision.message } : {}),
+      superAdmin: superAdmin && decision.allowed,
+      decisionProvider,
+    };
+  }
+
   /** @internal */
   async hasAnyRoleFor(user: User, roles: string[]): Promise<boolean> {
     return this.rbac.hasAnyRole(user, roles);
@@ -375,7 +431,14 @@ export class Gate {
         prefetched ? prefetched.verdict : await provider.decide(user, ability, resource),
       );
       if (verdict.allowed !== undefined) {
-        return { allowed: verdict.allowed, reason: 'decision-provider', policy: null };
+        return verdict.message === undefined
+          ? { allowed: verdict.allowed, reason: 'decision-provider', policy: null }
+          : {
+              allowed: verdict.allowed,
+              reason: 'decision-provider',
+              policy: null,
+              message: verdict.message,
+            };
       }
     }
 

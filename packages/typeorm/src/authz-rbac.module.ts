@@ -250,6 +250,48 @@ class RbacRoleProvider implements RoleProvider {
     const own = await this.options.store.getRolesForUser(ref, tenant.scope);
     return tenant.roles.length === 0 ? own : [...new Set([...own, ...tenant.roles])];
   }
+
+  /**
+   * Where the user's roles and permissions come from, for the core's dev tools
+   * (`authz_explain_check`): the scope the lookups ran in, store vs `tenancy.roles` roles,
+   * each role's permissions, and every permission granted in that scope.
+   */
+  async describeRbac(user: unknown): Promise<
+    | {
+        tenantId: string | null;
+        roles: { store: string[]; tenant: string[] };
+        rolePermissions: Record<string, string[]>;
+        permissions: string[];
+      }
+    | undefined
+  > {
+    const map = this.options.userRefFrom ?? defaultUserRefMapper;
+    const ref = map(user);
+    if (ref === undefined) return undefined;
+    const tenant = rbacTenant(
+      this.options,
+      user,
+      ref,
+      this.context,
+      this.moduleRef,
+      this.contextCache,
+      true,
+    );
+    const [own, permissions] = await Promise.all([
+      this.options.store.getRolesForUser(ref, tenant.scope),
+      this.options.store.getPermissionsForUser(ref, tenant.scope),
+    ]);
+    const roles = [...new Set([...own, ...tenant.roles])];
+    const rolePermissions =
+      roles.length === 0 ? {} : await this.options.store.getRolePermissions(roles);
+    const fromTenantRoles = tenant.roles.flatMap((role) => rolePermissions[role] ?? []);
+    return {
+      tenantId: tenant.scope.tenantId ?? null,
+      roles: { store: own, tenant: tenant.roles },
+      rolePermissions,
+      permissions: [...new Set([...permissions, ...fromTenantRoles])],
+    };
+  }
 }
 
 /** Runs `ensureAuthzSchema` on bootstrap when `autoCreateSchema` is not disabled. */

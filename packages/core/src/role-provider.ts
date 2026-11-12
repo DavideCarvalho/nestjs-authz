@@ -17,6 +17,24 @@ import type { User } from './types.js';
  */
 export interface RoleProvider {
   getRoles(user: User): string[] | undefined | Promise<string[] | undefined>;
+  /**
+   * Optional: where the user's roles and permissions come from, for the dev tools
+   * (`authz_explain_check`). The RBAC adapters implement it; `undefined` for a user they
+   * cannot map.
+   */
+  describeRbac?(user: User): Promise<RbacDescription | undefined>;
+}
+
+/** What {@link RoleProvider.describeRbac} answers: the RBAC store's view of one user. */
+export interface RbacDescription {
+  /** The tenant scope the lookups ran in; `null` = the global scope. */
+  tenantId: string | null;
+  /** Role names by where they come from: assigned in the store, or mapped by `tenancy.roles`. */
+  roles: { store: string[]; tenant: string[] };
+  /** Permissions of each of those roles in the store. */
+  rolePermissions: Record<string, string[]>;
+  /** Every permission granted in that scope: role-derived plus direct grants. */
+  permissions: string[];
 }
 
 /**

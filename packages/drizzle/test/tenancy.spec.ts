@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { runInTenantScope } from '@dudousxd/nestjs-authz';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   type AuthzTenancyOption,
@@ -47,6 +48,43 @@ const resolve = (
     resolver: extra.resolver,
     legacyContextTenant: extra.legacy ?? true,
   });
+
+describe("resolveRbacTenant: the core's runInTenantScope (dev tools) wins", () => {
+  it('beats the explicit resolver, the context tenant and the legacy tenantId', () => {
+    const ctx = context({
+      enabled: true,
+      filter: { mode: 'tenant', tenant: { ...ACME, id: 'other' } },
+      tenantId: 'other',
+    });
+    const resolver = () => 'resolved';
+    expect(runInTenantScope('acme', () => resolve(ctx, { resolver }))).toEqual({
+      scope: { tenantId: 'acme' },
+      roles: [],
+    });
+    expect(runInTenantScope(null, () => resolve(ctx, { resolver }))).toEqual({
+      scope: {},
+      roles: [],
+    });
+    expect(resolve(ctx, { resolver })).toEqual({ scope: { tenantId: 'resolved' }, roles: [] });
+  });
+
+  it('tenancy.roles still maps the caller role when the forced tenant is the context tenant', () => {
+    const ctx = context({
+      enabled: true,
+      filter: { mode: 'tenant', tenant: ACME },
+      user: { type: 'user', id: 1 },
+    });
+    const tenancy = { roles: { owner: 'org_admin' } };
+    expect(runInTenantScope('acme', () => resolve(ctx, { tenancy }))).toEqual({
+      scope: { tenantId: 'acme' },
+      roles: ['org_admin'],
+    });
+    expect(runInTenantScope('beta', () => resolve(ctx, { tenancy }))).toEqual({
+      scope: { tenantId: 'beta' },
+      roles: [],
+    });
+  });
+});
 
 describe('resolveRbacTenant: tenancy off keeps the adapter behaviour', () => {
   it('no context at all: global scope', () => {

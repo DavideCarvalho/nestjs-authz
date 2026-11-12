@@ -64,6 +64,19 @@ export interface TenantContextAccessor {
 
 const SLOT = Symbol.for('@dudousxd/nestjs-diagnostics:accessor');
 
+/** The core's `runInTenantScope` storage, read structurally (any core version, or none). */
+const TENANT_SCOPE_SLOT = Symbol.for('@dudousxd/nestjs-authz:tenant-scope');
+
+/** The scope forced by the core's `runInTenantScope` (the dev tools), if any. */
+function forcedScope(): { tenantId: string | null } | undefined {
+  const slot = (globalThis as unknown as Record<symbol, unknown>)[TENANT_SCOPE_SLOT] as
+    | { storage?: { getStore?(): unknown } }
+    | undefined;
+  const store = slot?.storage?.getStore?.() as { tenantId?: unknown } | undefined;
+  if (!store || (store.tenantId !== null && typeof store.tenantId !== 'string')) return undefined;
+  return { tenantId: store.tenantId };
+}
+
 type Tenancy = { enabled: false } | { enabled: true; filter(): TenantFilter };
 
 /** Is tenancy on for this module? Call per check: the context can change between requests. */
@@ -139,12 +152,18 @@ export interface ResolveRbacTenantInput {
 }
 
 /**
- * Precedence: the explicit `tenant` resolver, then (tenancy on) the context tenant filter, then
+ * Precedence: a scope forced by the core's `runInTenantScope` (the dev tools), then the
+ * explicit `tenant` resolver, then (tenancy on) the context tenant filter, then
  * (tenancy off) the adapter's behaviour without tenancy. `tenant` mode scopes to that tenant;
  * `tenantless`, `all` and `system` use the global scope.
  */
 export function resolveRbacTenant(input: ResolveRbacTenantInput): RbacTenant {
-  const explicit = input.resolver ? input.resolver(input.user) : undefined;
+  const forced = forcedScope();
+  const explicit = forced
+    ? forced.tenantId
+    : input.resolver
+      ? input.resolver(input.user)
+      : undefined;
   const accessor = effectiveAccessor(input.accessor);
   const tenancy = readTenancy(input.tenancy, accessor);
   const filter = tenancy.enabled ? tenancy.filter() : undefined;

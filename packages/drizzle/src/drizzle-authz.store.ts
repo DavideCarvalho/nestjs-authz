@@ -59,7 +59,31 @@ export class DrizzleAuthzStore {
    */
   async ensureSchema(): Promise<void> {
     for (const statement of authzSchemaDdl(this.tables)) {
+      const create = /^CREATE SCHEMA IF NOT EXISTS "([^"]+)"$/.exec(statement);
+      if (create) {
+        await this.createSchemaIfMissing(create[1] as string, statement);
+        continue;
+      }
       await this.db.execute(sql.raw(statement));
+    }
+  }
+
+  /**
+   * `CREATE SCHEMA IF NOT EXISTS` needs the CREATE privilege even when the schema exists, so the
+   * catalog is checked first; a failure names the grant needed.
+   */
+  private async createSchemaIfMissing(schema: string, statement: string): Promise<void> {
+    const found = (await this.db.execute(
+      sql`SELECT 1 AS found FROM information_schema.schemata WHERE schema_name = ${schema}`,
+    )) as unknown as { rows?: unknown[] } | unknown[];
+    const rows = Array.isArray(found) ? found : (found.rows ?? []);
+    if (rows.length > 0) return;
+    try {
+      await this.db.execute(sql.raw(statement));
+    } catch (error) {
+      throw new Error(
+        `nestjs-authz: could not create the schema ${JSON.stringify(schema)} for the authz tables (${(error as Error).message}). GRANT CREATE ON DATABASE <database> TO <role>, or create the schema "${schema}" yourself.`,
+      );
     }
   }
 

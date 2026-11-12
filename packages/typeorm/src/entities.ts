@@ -1,3 +1,4 @@
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import { DEFAULT_ROLE_SOURCE } from '@dudousxd/nestjs-authz/store-kit';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
@@ -143,3 +144,77 @@ export const AUTHZ_ENTITIES = [
   UserRoleEntity,
   UserPermissionEntity,
 ] as const;
+
+/** Options for {@link authzEntities}. */
+export interface AuthzEntitiesOptions {
+  /**
+   * Put the tables in this schema: a Postgres schema, or a MySQL database. Every query and DDL
+   * statement names it; `search_path` is never used.
+   */
+  schema?: string;
+  /** The connection's database type: `schema` becomes the entities' `schema` on Postgres and their `database` on MySQL. Default `'postgres'`. */
+  type?: 'postgres' | 'mysql';
+  /** BYO table names, like the store's `tableNames`. */
+  tableNames?: Partial<Record<keyof typeof DEFAULT_TABLE_NAMES, string>>;
+}
+
+const BASES = {
+  roles: RoleEntity,
+  permissions: PermissionEntity,
+  rolePermission: RolePermissionEntity,
+  userRole: UserRoleEntity,
+  userPermission: UserPermissionEntity,
+} as const;
+
+/**
+ * The authz entities under your table names and schema, for a DataSource whose `synchronize` or
+ * migrations generator manages them. Register these INSTEAD of {@link AUTHZ_ENTITIES} and pass
+ * the same `schema` / `tableNames` to the store:
+ *
+ * ```ts
+ * const entities = authzEntities({ schema: 'authz' });
+ * new DataSource({ type: 'postgres', entities: [...entities, ...appEntities] });
+ * new TypeOrmAuthzStore(dataSource, { schema: 'authz' });
+ * ```
+ */
+export function authzEntities(
+  options: AuthzEntitiesOptions = {},
+): [
+  typeof RoleEntity,
+  typeof PermissionEntity,
+  typeof RolePermissionEntity,
+  typeof UserRoleEntity,
+  typeof UserPermissionEntity,
+] {
+  const { schema, type = 'postgres', tableNames = {} } = options;
+  if (schema !== undefined) assertSchemaName(schema);
+  const make = <K extends keyof typeof BASES>(key: K): (typeof BASES)[K] => {
+    const name = tableNames[key] ?? DEFAULT_TABLE_NAMES[key];
+    assertSafeIdentifier(name, `table name (${key})`);
+    const base = BASES[key] as unknown as new () => object;
+    // A subclass per call: TypeORM reads the columns from the decorated base class.
+    const entity = class extends base {};
+    Object.defineProperty(entity, 'name', { value: base.name });
+    const where = schema === undefined ? {} : type === 'mysql' ? { database: schema } : { schema };
+    Entity({ name, ...where })(entity);
+    return entity as unknown as (typeof BASES)[K];
+  };
+  return [
+    make('roles'),
+    make('permissions'),
+    make('rolePermission'),
+    make('userRole'),
+    make('userPermission'),
+  ];
+}
+
+/**
+ * Validate a `schema` option: a safe identifier (letters, digits, `_`, not starting with a
+ * digit) of at most 63 characters (the Postgres limit; MySQL allows 64).
+ */
+export function assertSchemaName(schema: string): void {
+  assertSafeIdentifier(schema, 'schema name');
+  if (schema.length > 63) {
+    throw new Error(`Schema name ${JSON.stringify(schema)} is longer than 63 characters.`);
+  }
+}

@@ -96,13 +96,18 @@ describe('TypeOrmAuthzStore rejects hostile identifiers (P4)', () => {
     );
   });
 
-  it('accepts a clean BYO schema + table names', () => {
+  it('accepts a clean BYO schema + table names (on a database with schemas)', () => {
+    const { ds: pg } = recordingDataSource('postgres');
     expect(
       () =>
-        new TypeOrmAuthzStore(ds, {
+        new TypeOrmAuthzStore(pg, {
           schema: 'rbac',
           tableNames: { roles: 'rbac_roles' },
         }),
     ).not.toThrow();
+  });
+
+  it('refuses a schema on SQLite', () => {
+    expect(() => new TypeOrmAuthzStore(ds, { schema: 'rbac' })).toThrow(/not supported on SQLite/);
   });
 });

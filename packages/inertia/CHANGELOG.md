@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz-inertia
 
+## 0.3.0
+
+### Minor Changes
+
+- Back on the 0.x line. The 1.x and 2.x versions were published by accident: a release-tooling peer cascade bumped this package to a major, not an API decision. 0.3.0 contains everything those versions shipped (console `authorize` support, tenancy, Node 24+ `engines`) with no other change. Upgrade from 1.x/2.x to 0.3.0; those versions are deprecated.
+
 ## 2.0.0
 
 ### Major Changes

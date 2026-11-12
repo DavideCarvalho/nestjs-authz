@@ -242,7 +242,109 @@ that tenant's scoped rows only), and `removeUser(user)` drops all of a user's as
 
 ### Tenant-scoped permissions
 
-The TypeORM and Drizzle adapters store tenant-scoped role assignments. Because they read the current tenant from [`@dudousxd/nestjs-context`](/docs/context) (`Context.tenantId()`), permission lookups are **scoped to the active tenant** automatically — the same user can be an `editor` in one tenant and a `viewer` in another, and the provider resolves the right set for the request in flight. No per-call tenant argument required.
+A role can be assigned globally (it applies in every tenant) or inside one tenant:
+
+```ts
+await store.assignRole(user, 'editor', { tenantId: 'acme' }); // only inside acme
+await store.assignRole(user, 'viewer');                        // everywhere
+await store.getRolesForUser(user, { tenantId: 'acme' });      // ['editor', 'viewer']
+await store.getRolesForUser(user);                            // ['viewer']
+```
+
+The TypeORM and Drizzle adapters store tenant-scoped assignments out of the box. MikroORM and
+Prisma need a `tenantId` column first (see [Tenant column for MikroORM and Prisma](#tenant-column-for-mikroorm-and-prisma)).
+
+The RBAC module picks the tenant of each check for you, so permission and role checks need no
+tenant argument. In order:
+
+1. Your `tenant` resolver, when you configure one (below).
+2. With tenancy on, the request's tenant from [`@dudousxd/nestjs-context`](/docs/context/tenancy).
+3. With tenancy off, TypeORM and Drizzle read the plain `Context.tenantId()`, and MikroORM and
+   Prisma check global assignments only.
+
+### Tenancy
+
+Tenancy follows the switch in `ContextModule.forRoot({ tenancy: { enabled: true } })`. Your app
+sets the tenant of each request with `Context.setTenant(...)` (see the
+[context Tenancy page](/docs/context/tenancy)), and every check is then scoped to it:
+
+| Request | Assignments that count |
+|---------|------------------------|
+| Has a tenant | global ones, plus that tenant's |
+| No tenant, or a tenant of a kind outside `kinds` | global ones |
+| Inside `Context.allTenants()`, or outside any request | global ones |
+
+Each RBAC module takes the same `tenancy` option:
+
+```ts
+AuthzRbacModule.forRoot({
+  connectionName: 'default',
+  tenancy: {
+    enabled: 'inherit',         // default: follow ContextModule; true/false to override
+    kinds: ['organization'],    // optional: tenant kinds this module honours
+    roles: {                    // optional: the caller's role inside the tenant → authz roles
+      owner: 'org_admin',
+      member: ['org_member', 'reader'],
+    },
+  },
+});
+```
+
+- `tenancy: 'inherit'` is the default. `tenancy: false` keeps the module out of tenancy even when
+  the context turns it on.
+- `roles` maps `tenant.role` (the role you pass to `Context.setTenant`) to authz roles that apply
+  **in that tenant only**. Their permissions come from your store, like any role:
+  `store.syncRolePermissions('org_admin', ['billing.manage'])`. Unmapped roles grant nothing.
+  The mapped roles belong to the current user of the context (`Context.userRef()`), so
+  `gate.forUser(someoneElse)` does not get them.
+- `nullRows` is accepted for the shared shape but changes nothing here: a global assignment
+  always applies.
+
+To decide the tenant yourself, pass a `tenant` resolver. It wins over the context:
+
+```ts
+AuthzRbacModule.forRoot({
+  store,
+  // a tenant id, null for the global scope, or undefined to fall back to the context
+  tenant: (user) => (user as { orgId?: string }).orgId,
+});
+```
+
+### Tenant column for MikroORM and Prisma
+
+**MikroORM:** build the entities with `tenantScoped: true`. `ensureSchema` (or `authzSchemaSql`)
+adds a `tenant_id` column, default `''` (global), to the user-role table:
+
+```ts
+import { createAuthzEntitySchemas } from '@dudousxd/nestjs-authz-mikro-orm';
+
+const authz = createAuthzEntitySchemas({}, { tenantScoped: true });
+MikroOrmModule.forRoot({ entities: [...authz.all /* , your entities */] });
+```
+
+**Prisma:** add the column to `UserRole`, include it in the `@@id`, run your migration, and turn
+it on in the module (or in `new PrismaAuthzStore(prisma, { tenantScoped: true })`):
+
+```prisma
+model UserRole {
+  userType String
+  userId   String
+  roleId   String
+  tenantId String @default("")
+
+  @@id([userType, userId, roleId, tenantId])
+  @@index([userType, userId])
+  @@map("authz_user_role")
+}
+```
+
+```ts
+AuthzRbacModule.forRoot({ client: prisma, tenantScoped: true });
+```
+
+Existing rows become global assignments. On an existing MikroORM table, widen the primary key so
+the same role can be assigned in two tenants; the MikroORM README has the SQL. Without the column,
+every assignment stays global and a write with a `tenantId` throws.
 
 ## How it fits together
 

@@ -21,10 +21,25 @@ import {
 // next to the store. They are defined once in core's store-kit.
 export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignment };
 
-/** Assignment source for role mutations (default `'manual'`) — see `setUserRoles`. */
-export interface RoleSourceOptions {
+/**
+ * Optional tenant scope for a query. Omitted → the GLOBAL scope (only global assignments; a
+ * tenant-scoped role never leaks into an unscoped check). With a `tenantId`, global assignments
+ * AND that tenant's apply. Needs `tenantScoped: true`; without it every assignment is global.
+ */
+export interface TenantScope {
+  tenantId?: string;
+}
+
+/**
+ * Assignment source (default `'manual'`, needs `roleSources: true`) and tenant (needs
+ * `tenantScoped: true`) for role mutations — see `setUserRoles`.
+ */
+export interface RoleSourceOptions extends TenantScope {
   source?: string;
 }
+
+/** The tenant id of a GLOBAL role assignment (applies in every tenant). */
+export const GLOBAL_TENANT = '';
 
 // Optional Nest DI decorators — declared structurally so this package does not need a
 // hard runtime dependency on @nestjs/common for the POJO store (the module supplies the
@@ -61,6 +76,32 @@ export class PrismaAuthzStore {
       );
     }
     return {};
+  }
+
+  /** The `tenantId` value of a written assignment (`{}` without `tenantScoped`). */
+  private tenantField(tenantId: string | undefined): { tenantId?: string } {
+    if (this.options?.tenantScoped) return { tenantId: tenantId ?? GLOBAL_TENANT };
+    if (tenantId !== undefined && tenantId !== GLOBAL_TENANT) {
+      throw new Error(
+        `PrismaAuthzStore: a tenant-scoped role assignment needs \`tenantId String @default("")\` on the UserRole model (in its @@id) and the store built with { tenantScoped: true }.`,
+      );
+    }
+    return {};
+  }
+
+  /** Assignments visible in a scope: global ones, plus the tenant's own when one is given. */
+  private tenantWhere(scope: TenantScope | undefined): Record<string, unknown> {
+    if (!this.options?.tenantScoped) return {};
+    const tenantId = scope?.tenantId ?? GLOBAL_TENANT;
+    return tenantId === GLOBAL_TENANT
+      ? { tenantId: GLOBAL_TENANT }
+      : { tenantId: { in: [GLOBAL_TENANT, tenantId] } };
+  }
+
+  /** The public `tenantId` of a stored row: `null` for a global assignment. */
+  private static rowTenant(row: { tenantId?: unknown }): string | null {
+    const value = row.tenantId as string | undefined | null;
+    return value === undefined || value === null || value === GLOBAL_TENANT ? null : value;
   }
 
   /**
@@ -224,25 +265,38 @@ export class PrismaAuthzStore {
   async assignRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const source = this.sourceField(opts?.source);
+    const tenant = this.tenantField(opts?.tenantId);
     const roleId = await this.createRole(roleName);
     const existing = await this.client.userRole.findFirst({
-      where: { userType: type, userId: id, roleId, ...source },
+      where: { userType: type, userId: id, roleId, ...source, ...tenant },
     });
     if (existing) return;
-    await this.client.userRole.create({ data: { userType: type, userId: id, roleId, ...source } });
+    await this.client.userRole.create({
+      data: { userType: type, userId: id, roleId, ...source, ...tenant },
+    });
   }
 
   /**
    * Remove a role from a user. No-op if the role or assignment is absent. With `{ source }` only
-   * that source's assignment goes; without it, the role is removed from every source.
+   * that source's assignment goes; without it, the role is removed from every source. With
+   * `tenantScoped`, `{ tenantId }` removes the assignment in that tenant and omitting it removes
+   * the global one.
    */
   async removeRole(user: UserRef, roleName: string, opts?: RoleSourceOptions): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const source = opts?.source === undefined ? {} : this.sourceField(opts.source);
+    if (
+      !this.options?.tenantScoped &&
+      opts?.tenantId !== undefined &&
+      opts.tenantId !== GLOBAL_TENANT
+    ) {
+      return; // no tenant column: there is no tenant-scoped assignment to remove
+    }
+    const tenant = this.tenantField(opts?.tenantId);
     const roleId = await this.findRoleId(roleName);
     if (!roleId) return;
     await this.client.userRole.deleteMany({
-      where: { userType: type, userId: id, roleId, ...source },
+      where: { userType: type, userId: id, roleId, ...source, ...tenant },
     });
   }
 
@@ -251,7 +305,8 @@ export class PrismaAuthzStore {
    * `roleNames` — e.g. an SSO/SCIM sync calls `setUserRoles(user, mappedRoles, { source: 'sso' })`
    * on every login; other sources' assignments are untouched. Roles are created by name when
    * missing. Atomic when the client has `$transaction`. Without `roleSources: true` there is only
-   * one (implicit manual) source, so this replaces ALL of the user's roles.
+   * one (implicit manual) source, so this replaces ALL of the user's roles. With `tenantScoped` it
+   * replaces the assignments of one tenant (`{ tenantId }`), or the global ones when omitted.
    */
   async setUserRoles(
     user: UserRef,
@@ -260,22 +315,30 @@ export class PrismaAuthzStore {
   ): Promise<void> {
     const { type, id } = normalizeUserRef(user);
     const source = this.sourceField(opts?.source);
+    const tenant = this.tenantField(opts?.tenantId);
     const roleIds: string[] = [];
     for (const name of new Set(roleNames)) roleIds.push(await this.createRole(name));
     const replace = async (client: PrismaAuthzClientLike) => {
-      await client.userRole.deleteMany({ where: { userType: type, userId: id, ...source } });
+      await client.userRole.deleteMany({
+        where: { userType: type, userId: id, ...source, ...tenant },
+      });
       for (const roleId of roleIds) {
-        await client.userRole.create({ data: { userType: type, userId: id, roleId, ...source } });
+        await client.userRole.create({
+          data: { userType: type, userId: id, roleId, ...source, ...tenant },
+        });
       }
     };
     await this.inTransaction(replace);
   }
 
-  /** Every role assignment of a user, one entry per `(role, source)`. */
-  async getRoleAssignments(user: UserRef): Promise<RoleAssignment[]> {
+  /**
+   * Every role assignment of a user visible in a tenant scope (global ones always; the tenant's
+   * own with `{ tenantId }`), one entry per `(role, source, tenant)`.
+   */
+  async getRoleAssignments(user: UserRef, scope?: TenantScope): Promise<RoleAssignment[]> {
     const { type, id } = normalizeUserRef(user);
     const assignments = await this.client.userRole.findMany({
-      where: { userType: type, userId: id },
+      where: { userType: type, userId: id, ...this.tenantWhere(scope) },
     });
     if (assignments.length === 0) return [];
     const roles = await this.client.role.findMany({
@@ -287,9 +350,14 @@ export class PrismaAuthzStore {
       .map((a) => ({
         role: nameById.get(a.roleId as string) as string,
         source: (a.source as string | undefined) ?? DEFAULT_ROLE_SOURCE,
-        tenantId: null,
+        tenantId: PrismaAuthzStore.rowTenant(a),
       }))
-      .sort((a, b) => a.role.localeCompare(b.role) || a.source.localeCompare(b.source));
+      .sort(
+        (a, b) =>
+          a.role.localeCompare(b.role) ||
+          a.source.localeCompare(b.source) ||
+          (a.tenantId ?? '').localeCompare(b.tenantId ?? ''),
+      );
   }
 
   /**
@@ -297,13 +365,17 @@ export class PrismaAuthzStore {
    * a user's assignments with their sources (`{ user }`). `role` accepts one name or a list;
    * `user` and `source` narrow further. Ordered by `(userType, userId, role, source)`.
    *
-   * This adapter has no tenant-scoped assignments — every row is global (`tenantId: null`). So
-   * `tenantId: undefined` or `null` lists everything, and a tenant id string matches nothing.
+   * `tenantId`: omitted = no tenant filter; `null` = global assignments only; a string = exactly
+   * that tenant's scoped assignments. Without `tenantScoped: true` every row is global
+   * (`tenantId: null`), so a tenant id string matches nothing.
    * Without `roleSources: true` every row is `'manual'`, so another `source` matches nothing.
    */
   async listRoleAssignments(filter: RoleAssignmentFilter = {}): Promise<UserRoleAssignment[]> {
-    if (typeof filter.tenantId === 'string') return [];
     const where: Record<string, unknown> = {};
+    if (filter.tenantId !== undefined) {
+      if (this.options?.tenantScoped) where.tenantId = filter.tenantId ?? GLOBAL_TENANT;
+      else if (filter.tenantId !== null) return [];
+    }
     if (filter.source !== undefined) {
       if (this.options?.roleSources) where.source = filter.source;
       else if (filter.source !== DEFAULT_ROLE_SOURCE) return [];
@@ -333,7 +405,7 @@ export class PrismaAuthzStore {
         userId: a.userId as string,
         role: nameById.get(a.roleId as string) as string,
         source: (a.source as string | undefined) ?? DEFAULT_ROLE_SOURCE,
-        tenantId: null,
+        tenantId: PrismaAuthzStore.rowTenant(a),
       }))
       .sort(compareUserRoleAssignments);
   }
@@ -349,11 +421,11 @@ export class PrismaAuthzStore {
 
   // --- queries ---
 
-  /** The role names a user holds. */
-  async getRolesForUser(user: UserRef): Promise<string[]> {
+  /** The role names a user holds, in a tenant scope (see {@link TenantScope}). */
+  async getRolesForUser(user: UserRef, scope?: TenantScope): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
     const assignments = await this.client.userRole.findMany({
-      where: { userType: type, userId: id },
+      where: { userType: type, userId: id, ...this.tenantWhere(scope) },
     });
     if (assignments.length === 0) return [];
     const roleIds = [...new Set(assignments.map((a) => a.roleId as string))];
@@ -375,7 +447,7 @@ export class PrismaAuthzStore {
    * is preserved everywhere and only the common (Postgres + documented schema) case
    * gets the speedup.
    */
-  async getPermissionsForUser(user: UserRef): Promise<string[]> {
+  async getPermissionsForUser(user: UserRef, scope?: TenantScope): Promise<string[]> {
     const { type, id } = normalizeUserRef(user);
 
     const queryRaw = this.client.$queryRaw;
@@ -384,7 +456,16 @@ export class PrismaAuthzStore {
         // Single JOIN across the three documented `@@map` tables. Identifiers are
         // literal + double-quoted (Postgres); the user `${type}`/`${id}` VALUES go
         // through the tagged template as BOUND params — never string-concatenated.
-        const rows = await queryRaw<Array<{ name: string }>>`
+        const rows = this.options?.tenantScoped
+          ? await queryRaw<Array<{ name: string }>>`
+          SELECT DISTINCT p."name" AS name
+          FROM "authz_permissions" p
+          JOIN "authz_role_permission" rp ON rp."permissionId" = p."id"
+          JOIN "authz_user_role" ur ON ur."roleId" = rp."roleId"
+          WHERE ur."userType" = ${type} AND ur."userId" = ${id}
+            AND ur."tenantId" IN (${GLOBAL_TENANT}, ${scope?.tenantId ?? GLOBAL_TENANT})
+        `
+          : await queryRaw<Array<{ name: string }>>`
           SELECT DISTINCT p."name" AS name
           FROM "authz_permissions" p
           JOIN "authz_role_permission" rp ON rp."permissionId" = p."id"
@@ -394,11 +475,11 @@ export class PrismaAuthzStore {
         return [...new Set(rows.map((r) => r.name))];
       } catch {
         // Raw path unsupported for this client/schema/dialect — fall back below.
-        return this.getPermissionsViaDelegates(type, id);
+        return this.getPermissionsViaDelegates(type, id, scope);
       }
     }
 
-    return this.getPermissionsViaDelegates(type, id);
+    return this.getPermissionsViaDelegates(type, id, scope);
   }
 
   /**
@@ -407,9 +488,13 @@ export class PrismaAuthzStore {
    * Used directly when `$queryRaw` is unavailable, and as the fallback when the raw
    * fast path throws.
    */
-  private async getPermissionsViaDelegates(type: string, id: string): Promise<string[]> {
+  private async getPermissionsViaDelegates(
+    type: string,
+    id: string,
+    scope: TenantScope | undefined,
+  ): Promise<string[]> {
     const assignments = await this.client.userRole.findMany({
-      where: { userType: type, userId: id },
+      where: { userType: type, userId: id, ...this.tenantWhere(scope) },
     });
     if (assignments.length === 0) return [];
     const roleIds = assignments.map((a) => a.roleId as string);
@@ -424,18 +509,22 @@ export class PrismaAuthzStore {
     return [...new Set(permissions.map((p) => p.name as string))];
   }
 
-  /** A user's roles + effective permissions in one shot. */
-  async getUserAuthz(user: UserRef): Promise<UserAuthz> {
+  /** A user's roles + effective permissions in one shot, in a tenant scope. */
+  async getUserAuthz(user: UserRef, scope?: TenantScope): Promise<UserAuthz> {
     const [roles, permissions] = await Promise.all([
-      this.getRolesForUser(user),
-      this.getPermissionsForUser(user),
+      this.getRolesForUser(user, scope),
+      this.getPermissionsForUser(user, scope),
     ]);
     return { roles, permissions };
   }
 
-  /** True when the user holds `permission` through any of their roles. */
-  async userHasPermission(user: UserRef, permission: string): Promise<boolean> {
-    const permissions = await this.getPermissionsForUser(user);
+  /** True when the user holds `permission` through any of their roles, in a tenant scope. */
+  async userHasPermission(
+    user: UserRef,
+    permission: string,
+    scope?: TenantScope,
+  ): Promise<boolean> {
+    const permissions = await this.getPermissionsForUser(user, scope);
     return permissions.includes(permission);
   }
 }

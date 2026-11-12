@@ -3,6 +3,7 @@ export {
   AUTHZ_ENTITY_CLASSES,
   createAuthzEntitySchemas,
   DEFAULT_TABLE_NAMES,
+  GLOBAL_TENANT,
   PermissionEntity,
   PermissionEntitySchema,
   RoleEntity,
@@ -12,7 +13,11 @@ export {
   UserRoleEntity,
   UserRoleEntitySchema,
 } from './entities.js';
-export type { AuthzEntitySchemas, AuthzTableNames } from './entities.js';
+export type {
+  AuthzEntitySchemaOptions,
+  AuthzEntitySchemas,
+  AuthzTableNames,
+} from './entities.js';
 // VALUE exports on purpose: these classes are the DI tokens `MikroOrmModule.forFeature()`
 // registers, so `export type` would compile green and be `undefined` at runtime.
 export {
@@ -27,6 +32,7 @@ export type {
   RoleAssignment,
   RoleAssignmentFilter,
   RoleSourceOptions,
+  TenantScope,
   UserAuthz,
   UserRoleAssignment,
 } from './mikro-orm-authz.store.js';
@@ -42,6 +48,7 @@ export type {
   UserRefMapper,
 } from './authz-rbac.module.js';
 export type { AuthzStoreOptions } from './types.js';
+export type { AuthzTenancyOption, TenantResolver } from './tenancy.js';
 export type { UserRef, UserRefInput } from '@dudousxd/nestjs-authz/store-kit';
 export { applyScope, compileScope } from './scope.js';
 export type { ScopeResolver } from './scope.js';

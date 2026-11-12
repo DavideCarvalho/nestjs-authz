@@ -20,6 +20,9 @@ export const DEFAULT_TABLE_NAMES = {
   userRole: 'authz_user_role',
 } as const;
 
+/** The tenant id of a GLOBAL role assignment (applies in every tenant). */
+export const GLOBAL_TENANT = '';
+
 /** Physical table names for the four authz tables. */
 export interface AuthzTableNames {
   roles: string;
@@ -96,6 +99,16 @@ export class UserRoleEntity {
   source!: string;
 }
 
+/** Options for {@link createAuthzEntitySchemas}. */
+export interface AuthzEntitySchemaOptions {
+  /**
+   * Add a `tenantId` column (default `''` = global) to the user-role pivot, in its primary key,
+   * so role assignments can be scoped to a tenant. Default `false`: the tables keep their shape
+   * and every assignment is global.
+   */
+  tenantScoped?: boolean;
+}
+
 /** The four {@link EntitySchema} definitions produced by {@link createAuthzEntitySchemas}. */
 export interface AuthzEntitySchemas {
   role: EntitySchema<RoleEntity>;
@@ -123,9 +136,13 @@ export interface AuthzEntitySchemas {
  * Going through the factory (rather than hand-writing `new EntitySchema({ tableName })`)
  * keeps the custom repository binding and the index names attached to the renamed tables;
  * a hand-rolled re-declaration silently drops both.
+ *
+ * `{ tenantScoped: true }` adds a `tenantId` column to the user-role pivot (in its primary key),
+ * so a role can be assigned per tenant. Pass `{}` as the names to keep the default table names.
  */
 export function createAuthzEntitySchemas(
   tableNames: Partial<AuthzTableNames> = {},
+  options: AuthzEntitySchemaOptions = {},
 ): AuthzEntitySchemas {
   const names: AuthzTableNames = { ...DEFAULT_TABLE_NAMES, ...tableNames };
 
@@ -190,6 +207,14 @@ export function createAuthzEntitySchemas(
     },
     indexes: [{ name: `${names.userRole}_user_idx`, properties: ['userType', 'userId'] }],
   });
+  if (options.tenantScoped) {
+    // `tenantId` is not a field of the class (the default schemas don't map it), hence the cast.
+    userRole.addProperty('tenantId' as keyof UserRoleEntity & string, 'string', {
+      length: 191,
+      primary: true,
+      default: GLOBAL_TENANT,
+    });
+  }
 
   return {
     role,

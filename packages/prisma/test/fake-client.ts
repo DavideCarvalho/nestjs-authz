@@ -76,10 +76,12 @@ export function makeFakeClient(opts: { rawQuery?: boolean | 'throw' } = {}): Pri
       if (rawQuery === 'throw') {
         throw new Error('simulated $queryRaw failure');
       }
-      const [userType, userId] = values as [string, string];
+      // With `tenantScoped`, two more params follow: the visible tenants (global, scope).
+      const [userType, userId, ...tenants] = values as string[];
 
       const roleIds = userRole.rows
         .filter((r) => r.userType === userType && r.userId === userId)
+        .filter((r) => tenants.length === 0 || tenants.includes(r.tenantId as string))
         .map((r) => r.roleId as string);
       const permissionIds = new Set(
         rolePermission.rows

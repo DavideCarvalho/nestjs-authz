@@ -85,6 +85,16 @@ with its links and assignments, `listRoleAssignments({ tenantId?, role?, user?, 
 raw `{ userType, userId, role, source, tenantId }` rows (`tenantId: null` = global only, a string =
 that tenant's scoped rows only), and `removeUser(user)` drops all of a user's assignments.
 
+Tenant scope: role assignments can be global or per tenant (`assignRole(user, role, { tenantId })`;
+MikroORM needs `createAuthzEntitySchemas({}, { tenantScoped: true })`, Prisma a `tenantId` column
+plus `tenantScoped: true`). Each `AuthzRbacModule` picks the tenant of a check: its `tenant`
+resolver (`(user) => id | null | undefined`) first; then, with tenancy on (`tenancy: 'inherit'`
+follows `ContextModule.forRoot({ tenancy: { enabled: true } })`; `false` opts out), the context
+tenant from `Context.setTenant`; with tenancy off, TypeORM/Drizzle read `Context.tenantId()` and
+MikroORM/Prisma check global assignments only. `tenancy: { roles: { owner: 'org_admin' } }` maps
+the caller's `tenant.role` to authz roles in that tenant only (context user only). No tenant,
+`allTenants` or no request = global assignments only.
+
 ## Core patterns
 
 ### A hand-rolled PermissionProvider

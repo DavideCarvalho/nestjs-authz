@@ -1,4 +1,5 @@
 import {
+  CONTEXT_ACCESSOR,
   PERMISSION_PROVIDER,
   type PermissionProvider,
   ROLE_PROVIDER,
@@ -15,7 +16,16 @@ import {
   type Provider,
   type Type,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import type { MikroOrmAuthzStore } from './mikro-orm-authz.store.js';
+import {
+  type AuthzTenancyOption,
+  type RbacTenant,
+  type TenantContextAccessor,
+  type TenantContextCache,
+  type TenantResolver,
+  rbacTenant,
+} from './tenancy.js';
 
 /** Injection token holding the {@link MikroOrmAuthzStore} the RBAC module manages. */
 export const AUTHZ_RBAC_STORE = Symbol.for('@dudousxd/nestjs-authz-mikro-orm:store');
@@ -41,6 +51,17 @@ export interface AuthzRbacModuleOptions {
    * {@link defaultUserRefMapper} (`{ type, id }` or `{ id }`).
    */
   userRefFrom?: UserRefMapper;
+  /**
+   * Tenancy, from `@dudousxd/nestjs-context`. `'inherit'` (default) follows `ContextModule`'s
+   * `tenancy.enabled`; with it on, checks are scoped to the context tenant. The object form adds
+   * `kinds` and `roles` (map the caller's `tenant.role` to authz roles in that tenant).
+   */
+  tenancy?: AuthzTenancyOption;
+  /**
+   * Explicit tenant for a check, from the user being checked. Wins over the context: return a
+   * tenant id, `null` for the global scope, or `undefined` to fall back to the context.
+   */
+  tenant?: TenantResolver;
 }
 
 export interface AuthzRbacModuleAsyncOptions {
@@ -69,7 +90,31 @@ class RbacPermissionProvider implements PermissionProvider {
   // `getPermissions` lists every grant `hasPermission` can find, for any resource.
   readonly exhaustivePermissions = true;
 
-  constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
+  private readonly contextCache: TenantContextCache = { resolved: false, value: undefined };
+
+  constructor(
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
+    @Optional() private readonly moduleRef?: ModuleRef,
+  ) {}
+
+  private tenant(user: unknown, ref: UserRef): RbacTenant {
+    return rbacTenant(
+      this.options,
+      user,
+      ref,
+      this.context,
+      this.moduleRef,
+      this.contextCache,
+      false,
+    );
+  }
+
+  /** The permissions `tenancy.roles` grants through the caller's role in the tenant. */
+  private async tenantRolePermissions(roles: string[]): Promise<string[]> {
+    if (roles.length === 0) return [];
+    return Object.values(await this.options.store.getRolePermissions(roles)).flat();
+  }
 
   // The core `PermissionProvider` interface passes an optional `resource` (3rd
   // arg); it is intentionally ignored here. RBAC grants are model-less,
@@ -79,7 +124,9 @@ class RbacPermissionProvider implements PermissionProvider {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.userHasPermission(ref, permission);
+    const tenant = this.tenant(user, ref);
+    if (await this.options.store.userHasPermission(ref, permission, tenant.scope)) return true;
+    return (await this.tenantRolePermissions(tenant.roles)).includes(permission);
   }
 
   // Expose the user's full granted permission set so the core can apply
@@ -89,7 +136,10 @@ class RbacPermissionProvider implements PermissionProvider {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.getPermissionsForUser(ref);
+    const tenant = this.tenant(user, ref);
+    const own = await this.options.store.getPermissionsForUser(ref, tenant.scope);
+    if (tenant.roles.length === 0) return own;
+    return [...new Set([...own, ...(await this.tenantRolePermissions(tenant.roles))])];
   }
 }
 
@@ -101,13 +151,33 @@ class RbacPermissionProvider implements PermissionProvider {
  */
 @Injectable()
 class RbacRoleProvider implements RoleProvider {
-  constructor(@Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions) {}
+  private readonly contextCache: TenantContextCache = { resolved: false, value: undefined };
+
+  constructor(
+    @Inject(AUTHZ_RBAC_OPTIONS) private readonly options: AuthzRbacModuleOptions,
+    @Optional() @Inject(CONTEXT_ACCESSOR) private readonly context?: TenantContextAccessor,
+    @Optional() private readonly moduleRef?: ModuleRef,
+  ) {}
+
+  private tenant(user: unknown, ref: UserRef): RbacTenant {
+    return rbacTenant(
+      this.options,
+      user,
+      ref,
+      this.context,
+      this.moduleRef,
+      this.contextCache,
+      false,
+    );
+  }
 
   async getRoles(user: unknown): Promise<string[] | undefined> {
     const map = this.options.userRefFrom ?? defaultUserRefMapper;
     const ref = map(user);
     if (ref === undefined) return undefined;
-    return this.options.store.getRolesForUser(ref);
+    const tenant = this.tenant(user, ref);
+    const own = await this.options.store.getRolesForUser(ref, tenant.scope);
+    return tenant.roles.length === 0 ? own : [...new Set([...own, ...tenant.roles])];
   }
 }
 

@@ -10,9 +10,13 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  */
 export const TENANT_SCOPE_SLOT = Symbol.for('@dudousxd/nestjs-authz:tenant-scope');
 
-/** The forced scope: a tenant id, or `null` for the global scope. */
+/**
+ * What the current call forces: `tenantId` (a tenant id, or `null` for the global scope), and
+ * `required: false` to never throw for a missing tenant (`tenancy.required`).
+ */
 export interface TenantScopeOverride {
-  tenantId: string | null;
+  tenantId?: string | null;
+  required?: false;
 }
 
 interface TenantScopeSlot {
@@ -34,10 +38,21 @@ function slot(): TenantScopeSlot {
  * scope), ahead of the adapter's `tenant` resolver and the context tenant.
  */
 export function runInTenantScope<T>(tenantId: string | null, fn: () => T): T {
-  return slot().storage.run({ tenantId }, fn);
+  const storage = slot().storage;
+  return storage.run({ ...storage.getStore(), tenantId }, fn);
 }
 
-/** The forced scope of the current call, or `undefined` outside {@link runInTenantScope}. */
+/**
+ * Run `fn` where a missing tenant is not an error, even with `tenancy.required`: for paths that
+ * are not tenant-scoped requests (console access checks, dev tools, jobs). Checks with no tenant
+ * use the global scope there.
+ */
+export function runWithoutRequiredTenant<T>(fn: () => T): T {
+  const storage = slot().storage;
+  return storage.run({ ...storage.getStore(), required: false }, fn);
+}
+
+/** What the current call forces, or `undefined` outside {@link runInTenantScope} / {@link runWithoutRequiredTenant}. */
 export function currentTenantScopeOverride(): TenantScopeOverride | undefined {
   const existing = (globalThis as Record<symbol, unknown>)[TENANT_SCOPE_SLOT] as
     | TenantScopeSlot

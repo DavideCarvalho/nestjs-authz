@@ -29,6 +29,11 @@ export interface RoleProvider {
 export interface RbacDescription {
   /** The tenant scope the lookups ran in; `null` = the global scope. */
   tenantId: string | null;
+  /**
+   * Every tenant whose roles and grants applied, root first: the levels of a nested tenant
+   * the module honours (the last is `tenantId`). Empty for the global scope.
+   */
+  tenantChain?: string[];
   /** Role names by where they come from: assigned in the store, or mapped by `tenancy.roles`. */
   roles: { store: string[]; tenant: string[] };
   /** Permissions of each of those roles in the store. */

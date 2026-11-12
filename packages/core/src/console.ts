@@ -17,6 +17,7 @@ import { Gate } from './gate.js';
 import { PermissionPolicy } from './policies/permission.policy.js';
 import { RolePolicy } from './policies/role.policy.js';
 import { AuthzRbac } from './rbac.js';
+import { runWithoutRequiredTenant } from './tenant-override.js';
 import type { User } from './types.js';
 
 // --- The Aviary console access contract (each console lib declares the same shapes) ---
@@ -113,7 +114,8 @@ export class AuthzConsoleGate {
     test: (user: User) => Promise<boolean>,
   ): Promise<ConsoleAuthorizeResult> {
     const user = await this.userOf(context);
-    if (await test(user)) return true;
+    // Console access is not a tenant-scoped read: `tenancy.required` never denies it.
+    if (await runWithoutRequiredTenant(() => test(user))) return true;
     return user === null ? unauthenticated() : false;
   }
 }

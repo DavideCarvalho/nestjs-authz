@@ -2,8 +2,10 @@ import 'reflect-metadata';
 import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import { Policy } from '@nestjs/authorization';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AuthzConsoleGate } from '../src/console.js';
 import { type AuthzDevTool, DEV_TOOLS_SLOT } from '../src/dev-tools.js';
 import { authzDecisionChannel } from '../src/diagnostics.js';
+import { Gate } from '../src/gate.js';
 import { PolicyFor } from '../src/links.js';
 import type { PermissionProvider } from '../src/permission-provider.js';
 import type { RbacDescription, RoleProvider } from '../src/role-provider.js';
@@ -428,6 +430,31 @@ describe('authz dev tools', () => {
       items: [{ role: 'viewer', sources: ['provider'] }],
       warning: expect.stringContaining('cannot take `tenantId`'),
     });
+    await mod.close();
+  });
+});
+
+describe('tenancy.required outside tenant-scoped requests', () => {
+  it('console access checks and dev tools run with required: false', async () => {
+    const seen: Array<unknown> = [];
+    const roles: RoleProvider = {
+      getRoles: () => {
+        seen.push(currentTenantScopeOverride()?.required);
+        return ['admin'];
+      },
+    };
+    const { mod } = await bootContext({ roles });
+    const consoleGate = mod.get(AuthzConsoleGate);
+    const context = {
+      switchToHttp: () => ({ getRequest: () => ({ headers: { 'x-user': '{"id":"1"}' } }) }),
+      getType: () => 'http',
+    } as never;
+    expect(
+      await consoleGate.check(context, (user) => mod.get(Gate).forUser(user).hasRole('admin')),
+    ).toBe(true);
+    await tool('authz_list_effective_roles').run({ subjectId: '1' });
+    expect(seen).toEqual([false, false]);
+    expect(currentTenantScopeOverride()).toBeUndefined();
     await mod.close();
   });
 });

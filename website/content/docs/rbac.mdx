@@ -271,7 +271,8 @@ sets the tenant of each request with `Context.setTenant(...)` (see the
 | Request | Assignments that count |
 |---------|------------------------|
 | Has a tenant | global ones, plus that tenant's |
-| No tenant, or a tenant of a kind outside `kinds` | global ones |
+| Has a nested tenant (a unit inside a clinic) | global ones, plus those of every level of the chain the module honours |
+| No tenant, or a tenant of a kind outside `kinds` | global ones (an error with `required`) |
 | Inside `Context.allTenants()`, or outside any request | global ones |
 
 Each RBAC module takes the same `tenancy` option:
@@ -282,6 +283,8 @@ AuthzRbacModule.forRoot({
   tenancy: {
     enabled: 'inherit',         // default: follow ContextModule; true/false to override
     kinds: ['organization'],    // optional: tenant kinds this module honours
+    family: 'account',          // optional: only the tenant of this family counts
+    required: true,             // optional: a check with no tenant is a 403 (default: the context's)
     roles: {                    // optional: the caller's role inside the tenant → authz roles
       owner: 'org_admin',
       member: ['org_member', 'reader'],
@@ -297,6 +300,16 @@ AuthzRbacModule.forRoot({
   `store.syncRolePermissions('org_admin', ['billing.manage'])`. Unmapped roles grant nothing.
   The mapped roles belong to the current user of the context (`Context.userRef()`), so
   `gate.forUser(someoneElse)` does not get them.
+- With nested tenants (`Context.setTenant({ id: 'u1', kind: 'unit', chain: [clinic] })`), a role
+  assigned in the clinic also counts inside its units, and the caller's role at each level is
+  mapped by `roles`. `kinds` picks the levels: with `kinds: ['clinic', 'unit']` both count, with
+  `kinds: ['unit']` only the unit does.
+- `required` turns a check with no tenant into a `TenantRequiredError` (403,
+  `code: 'E_TENANT_REQUIRED'`) instead of a check in the global scope. It defaults to the
+  context's `tenancy.required`. Checks that are not about tenant data never require a tenant:
+  the Aviary console `authorize` helpers, the MCP dev tools, and any code you wrap in
+  `runWithoutRequiredTenant(() => …)` from `@dudousxd/nestjs-authz`. A `tenant` resolver that
+  answers, or `runInTenantScope(tenantId, () => …)`, also never needs one.
 - `nullRows` is accepted for the shared shape but changes nothing here: a global assignment
   always applies.
 

@@ -9,7 +9,7 @@ import {
 import { Gate } from './gate.js';
 import { permissionSatisfied } from './permission-matcher.js';
 import { AuthzRbac } from './rbac.js';
-import { runInTenantScope } from './tenant-override.js';
+import { runInTenantScope, runWithoutRequiredTenant } from './tenant-override.js';
 import { AUTHZ_MODULE_OPTIONS } from './tokens.js';
 import type { AuthzModuleOptions, User } from './types.js';
 
@@ -192,9 +192,10 @@ function scopeOf(input: Record<string, unknown>): string | null | undefined {
   return id === '' ? null : id;
 }
 
-/** Run `fn` in the forced scope, when there is one. */
+/** Run `fn` in the forced scope, when there is one, never requiring a tenant. */
 function inScope<T>(scope: string | null | undefined, fn: () => Promise<T>): Promise<T> {
-  return scope === undefined ? fn() : runInTenantScope(scope, fn);
+  // A dev tool call is not a tenant-scoped request: no tenant means the global scope.
+  return runWithoutRequiredTenant(() => (scope === undefined ? fn() : runInTenantScope(scope, fn)));
 }
 
 async function load(
@@ -236,7 +237,12 @@ const NO_SCOPE_SUPPORT =
 
 interface RoleView {
   roles: Array<{ role: string; sources: string[] }>;
-  tenant: { id: string | null; from: 'explicit' | 'global' | 'context' };
+  tenant: {
+    id: string | null;
+    from: 'explicit' | 'global' | 'context';
+    /** A nested tenant's levels whose roles and grants applied, root first. */
+    chain?: string[];
+  };
   rbac: Awaited<ReturnType<AuthzRbac['roleSourcesOf']>>['rbac'];
   warning?: string;
 }
@@ -263,7 +269,13 @@ async function roleView(
     scope !== undefined ? (scope === null ? 'global' : 'explicit') : id ? 'context' : 'global';
   return {
     roles: [...byRole].map(([role, from]) => ({ role, sources: from })),
-    tenant: { id, from },
+    tenant: {
+      id,
+      from,
+      ...(sources.rbac?.tenantChain && sources.rbac.tenantChain.length > 1
+        ? { chain: sources.rbac.tenantChain }
+        : {}),
+    },
     rbac: sources.rbac,
     ...(scope !== undefined && rbac.roles() !== undefined && sources.rbac === undefined
       ? { warning: NO_SCOPE_SUPPORT }

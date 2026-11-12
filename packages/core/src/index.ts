@@ -90,6 +90,22 @@ export type {
 } from './diagnostics.js';
 export { AuthzDecisionPublisher } from './decisions.js';
 
+// Aviary console access (`authorize` on the durable/telescope/media/agent consoles)
+export {
+  AuthzConsoleGate,
+  CONSOLE_GATE,
+  authorizeByPermission,
+  authorizeByRoles,
+  authorizeByToken,
+} from './console.js';
+export type {
+  ConsoleAuthorize,
+  ConsoleAuthorizeResult,
+  ConsoleAuthorizer,
+  ConsoleAuthorizerClass,
+  ConsolePolicyCheck,
+} from './console.js';
+
 // Client endpoint
 export { createCanController, DEFAULT_CAN_ENDPOINT_PATH } from './can-endpoint.controller.js';
 export type {

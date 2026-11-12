@@ -1,0 +1,98 @@
+---
+title: Protecting Aviary consoles
+description: Use the Gate to decide who opens the durable, telescope, media and agent consoles — authorizeByRoles, authorizeByPermission, gate names, official policies and authorizeByToken.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Every Aviary console (the durable dashboard, telescope, the media dashboard, the agent governance
+dashboard) takes one `authorize` option. With `AuthzModule` imported, you can answer it with the
+`Gate`: roles, permissions, gate names or official policies.
+
+```ts
+imports: [
+  AuthorizationModule.forRoot(),
+  AuthzModule.forRoot(),
+  DurableModule.forRoot({ authorize: authorizeByRoles({ roles: ['admin'] }) }),
+]
+```
+
+Each check uses the user the authorization guard sees: the official `getUser` (by default
+`request.user`), else the [ambient user](/docs/authz/current-user). Put your authentication guard
+in the console's `decorators` so the user is set before `authorize` runs. A denied guest gets
+401, a denied user 403.
+
+## By role
+
+```ts
+import { authorizeByRoles } from '@dudousxd/nestjs-authz';
+
+TelescopeModule.forRoot({ authorize: authorizeByRoles({ roles: ['admin', 'ops'] }) })
+```
+
+Allows a user holding any of the roles, the same check as `@Roles()` (persisted roles and the
+user's own, `superAdmin` applies).
+
+## By permission
+
+```ts
+import { authorizeByPermission } from '@dudousxd/nestjs-authz';
+
+MediaModule.forRoot({ authorize: authorizeByPermission('media.console') })
+```
+
+The same check as `@Permission()`: persisted permissions, wildcards apply (`console.*`).
+
+## By gate name
+
+Pass a string and define the gate:
+
+```ts
+DurableModule.forRoot({ authorize: 'console.durable' })
+```
+
+```ts
+@Injectable()
+export class ConsoleGates implements OnModuleInit {
+  constructor(private readonly gate: Gate) {}
+
+  onModuleInit() {
+    this.gate.define('console.durable', (user) => user?.isAdmin === true);
+  }
+}
+```
+
+Any string ability the `Gate` resolves works: an ad-hoc gate, a persisted permission, or a policy
+ability. A name that resolves to nothing denies the request and is logged.
+
+## By official policy
+
+```ts
+@Policy()
+export class ConsolePolicy {
+  view(user: User | null) {
+    return user?.isStaff === true;
+  }
+}
+
+AgentModule.forRoot({ authorize: { policy: ConsolePolicy, ability: 'view' } })
+```
+
+## By token
+
+For machines (CI, a Prometheus scraper): the request must send `Authorization: Bearer <token>`.
+
+```ts
+import { authorizeByToken } from '@dudousxd/nestjs-authz';
+
+TelescopeModule.forRoot({ authorize: authorizeByToken({ token: process.env.CONSOLE_TOKEN }) })
+```
+
+It throws at startup when the token is empty.
+
+<Callout>
+  Each console also accepts an inline function `(ctx) => boolean`, an `@Injectable()` class
+  implementing `ConsoleAuthorizer`, or a lazy `() => import('./console-access.js')`. The types
+  (`ConsoleAuthorize`, `ConsoleAuthorizer`, `ConsoleAuthorizeResult`, …) are exported from
+  `@dudousxd/nestjs-authz` too.
+</Callout>

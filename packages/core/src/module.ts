@@ -16,6 +16,7 @@ import {
 import { APP_GUARD, APP_INTERCEPTOR, DiscoveryModule } from '@nestjs/core';
 import { AuthzGuard, AuthzGuardStartupCheck } from './authz.guard.js';
 import { DEFAULT_CAN_ENDPOINT_PATH, createCanController } from './can-endpoint.controller.js';
+import { AuthzConsoleGate, CONSOLE_GATE } from './console.js';
 import { AuthzDecisionPublisher } from './decisions.js';
 import { Gate } from './gate.js';
 import { OFFICIAL_CAN_ANYONE_METADATA } from './official.js';
@@ -87,6 +88,8 @@ const EXPORTS = [
   AUTHZ_MODULE_OPTIONS,
   RESOURCE_RESOLVER,
   RESOURCE_HYDRATOR,
+  AuthzConsoleGate,
+  CONSOLE_GATE,
 ];
 
 /**
@@ -100,7 +103,8 @@ const EXPORTS = [
  * ```
  *
  * Registers `RolePolicy`, `PermissionPolicy` and `GatePolicy` (official policies), the
- * `Gate`, the resource resolver `byId()` uses, and the allow+deny decision event.
+ * `Gate`, the resource resolver `byId()` uses, the allow+deny decision event, and the
+ * console gate Aviary consoles resolve `authorize: '<gate name>'` through.
  * It needs the official module to be global (its default).
  */
 @Module({})
@@ -143,6 +147,9 @@ export class AuthzModule {
       RolePolicy,
       PermissionPolicy,
       GatePolicy,
+      AuthzConsoleGate,
+      // Aviary consoles resolve `authorize: '<gate name>'` through this token.
+      { provide: CONSOLE_GATE, useExisting: AuthzConsoleGate },
       {
         provide: RESOURCE_RESOLVER,
         useFactory: (options?: AuthzModuleOptions): ResourceResolver =>

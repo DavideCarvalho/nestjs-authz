@@ -164,6 +164,9 @@ export function createAuthzEntitySchemas(
   options: AuthzEntitySchemaOptions = {},
 ): AuthzEntitySchemas {
   const names: AuthzTableNames = { ...DEFAULT_TABLE_NAMES, ...tableNames };
+  for (const [key, name] of Object.entries(names)) {
+    assertSafeIdentifier(name, `table name "${key}"`);
+  }
   const schema = options.schema;
   if (schema !== undefined) assertSchemaName(schema);
   const where = schema === undefined ? {} : { schema };

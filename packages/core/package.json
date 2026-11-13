@@ -1,6 +1,6 @@
 {
   "name": "@dudousxd/nestjs-authz",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Extras on top of @nestjs/authorization: persisted RBAC policies, @Can helpers (byId, roles, permission), a Gate with batch checks and ad-hoc gates, super-admin, query scoping.",
   "license": "MIT",
   "repository": {

@@ -1,5 +1,20 @@
 # @dudousxd/nestjs-authz
 
+## 0.12.0
+
+### Minor Changes
+
+- [#76](https://github.com/DavideCarvalho/nestjs-authz/pull/76) [`d2a9b06`](https://github.com/DavideCarvalho/nestjs-authz/commit/d2a9b06c398b80c68957ae573c1f5bd866a9ff72) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add MCP dev tools: `AuthzModule` registers `authz_explain_check`, `authz_list_effective_roles` and `authz_list_effective_permissions` in the Aviary dev-tools slot (`Symbol.for('@dudousxd/aviary:dev-tools')`, created when absent). They register without an `authorize`, so the agent dev endpoint's `devTools.authorize` gates them (open outside production, denied in production without it); a hub that cannot gate console-less libs leaves them out. `devTools: { loadSubject, loadResource }` hands checks your models (default: `resolveUser` and `resourceLoaders`); `devTools: false` turns the tools off. New: `gate.explainFor(user, ability, resource?)`, `runInTenantScope(tenantId, fn)`, and `RoleProvider.describeRbac?(user)`, which the RBAC adapters implement; the adapters honour a scope forced by `runInTenantScope` ahead of their `tenant` resolver and the context tenant.
+
+- [#76](https://github.com/DavideCarvalho/nestjs-authz/pull/76) [`d2a9b06`](https://github.com/DavideCarvalho/nestjs-authz/commit/d2a9b06c398b80c68957ae573c1f5bd866a9ff72) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Tenancy for nested tenants, tenant families and required tenants (nestjs-context's chain contract, read structurally, so older contexts keep working):
+
+  - A role or grant assigned at any level of the active tenant chain applies (a clinic role counts inside its units). `tenancy.kinds` picks the levels, and the context's own `kinds` apply when the module sets none.
+  - `tenancy.roles` maps the caller's role at every level of the chain.
+  - New `tenancy.family` option.
+  - New `tenancy.required` option, defaulting to the context's. A check with no tenant throws `TenantRequiredError` (403, `E_TENANT_REQUIRED`) instead of running in the global scope.
+  - Console `authorize` helpers, the MCP dev tools, and the new `runWithoutRequiredTenant(fn)` pass `required: false`.
+  - `describeRbac` reports the `tenantChain`.
+
 ## 0.11.0
 
 ### Minor Changes

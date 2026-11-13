@@ -1,5 +1,34 @@
 # @dudousxd/nestjs-authz-drizzle
 
+## 0.5.0
+
+### Minor Changes
+
+- [#76](https://github.com/DavideCarvalho/nestjs-authz/pull/76) [`d2a9b06`](https://github.com/DavideCarvalho/nestjs-authz/commit/d2a9b06c398b80c68957ae573c1f5bd866a9ff72) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add MCP dev tools: `AuthzModule` registers `authz_explain_check`, `authz_list_effective_roles` and `authz_list_effective_permissions` in the Aviary dev-tools slot (`Symbol.for('@dudousxd/aviary:dev-tools')`, created when absent). They register without an `authorize`, so the agent dev endpoint's `devTools.authorize` gates them (open outside production, denied in production without it); a hub that cannot gate console-less libs leaves them out. `devTools: { loadSubject, loadResource }` hands checks your models (default: `resolveUser` and `resourceLoaders`); `devTools: false` turns the tools off. New: `gate.explainFor(user, ability, resource?)`, `runInTenantScope(tenantId, fn)`, and `RoleProvider.describeRbac?(user)`, which the RBAC adapters implement; the adapters honour a scope forced by `runInTenantScope` ahead of their `tenant` resolver and the context tenant.
+
+- [#76](https://github.com/DavideCarvalho/nestjs-authz/pull/76) [`d2a9b06`](https://github.com/DavideCarvalho/nestjs-authz/commit/d2a9b06c398b80c68957ae573c1f5bd866a9ff72) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - A `schema` option puts the authz tables in their own database schema: a Postgres schema, or a MySQL database. Every statement names it, and `search_path` is never used.
+
+  - **TypeORM** (Postgres and MySQL): `storeOptions.schema`. Adds `authzEntities({ schema, type, tableNames })` for synchronize/migration-generated setups.
+  - **Drizzle** (Postgres): `createAuthzTables({ schema })` / `storeOptions.schema`.
+  - **MikroORM** (Postgres and MySQL): `createAuthzEntitySchemas(names, { schema })`. The store reads the schema from the entity metadata and qualifies its raw SQL. On MySQL, the heal narrows MikroORM's diff against the target database's `information_schema`. `authzSchemaSql()` includes the create statement.
+  - **Prisma** (Postgres): the `schema` option, for models with `@@schema`. The fast path uses `$queryRawUnsafe` with the schema in the SQL and every value bound.
+
+  Shared behaviour:
+
+  - Auto-create makes the schema only when the catalog says it is missing. A failure names the grant needed.
+  - On SQLite, a `schema` fails at boot. Prisma refuses it on MySQL and SQLite.
+  - Names are validated (a safe identifier, at most 63 characters).
+  - Without `schema`, nothing changes.
+
+- [#76](https://github.com/DavideCarvalho/nestjs-authz/pull/76) [`d2a9b06`](https://github.com/DavideCarvalho/nestjs-authz/commit/d2a9b06c398b80c68957ae573c1f5bd866a9ff72) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Tenancy for nested tenants, tenant families and required tenants (nestjs-context's chain contract, read structurally, so older contexts keep working):
+
+  - A role or grant assigned at any level of the active tenant chain applies (a clinic role counts inside its units). `tenancy.kinds` picks the levels, and the context's own `kinds` apply when the module sets none.
+  - `tenancy.roles` maps the caller's role at every level of the chain.
+  - New `tenancy.family` option.
+  - New `tenancy.required` option, defaulting to the context's. A check with no tenant throws `TenantRequiredError` (403, `E_TENANT_REQUIRED`) instead of running in the global scope.
+  - Console `authorize` helpers, the MCP dev tools, and the new `runWithoutRequiredTenant(fn)` pass `required: false`.
+  - `describeRbac` reports the `tenantChain`.
+
 ## 0.4.0
 
 ### Minor Changes

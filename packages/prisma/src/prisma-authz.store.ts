@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import {
   DEFAULT_ROLE_SOURCE,
   type RoleAssignment,
@@ -62,7 +63,28 @@ export class PrismaAuthzStore {
     @Optional()
     @Inject(PRISMA_AUTHZ_STORE_OPTIONS)
     private readonly options: PrismaAuthzStoreOptions = {},
-  ) {}
+  ) {
+    const schema = options?.schema;
+    if (schema !== undefined) {
+      assertSafeIdentifier(schema, 'schema name');
+      if (schema.length > 63) {
+        throw new Error(`Schema name ${JSON.stringify(schema)} is longer than 63 characters.`);
+      }
+      // A real PrismaClient knows its provider; a structural client may not say.
+      const provider = (client as { _activeProvider?: unknown })._activeProvider;
+      if (typeof provider === 'string' && provider !== 'postgresql' && provider !== 'postgres') {
+        throw new Error(
+          `PrismaAuthzStore: \`schema: '${schema}'\` needs Postgres. Prisma has no @@schema on ${provider}; remove \`schema\`.`,
+        );
+      }
+    }
+  }
+
+  /** `"schema"."table"` with the `schema` option, else the bare quoted table (as before). */
+  private table(name: string): string {
+    const schema = this.options?.schema;
+    return schema === undefined ? `"${name}"` : `"${schema}"."${name}"`;
+  }
 
   /**
    * The `source` filter/value for an assignment: `{ source }` when per-source assignments are on,
@@ -453,6 +475,30 @@ export class PrismaAuthzStore {
     // `PrismaClient.$queryRaw` reads `this`, so an unbound reference throws and would
     // silently send every check down the slow path.
     const client = this.client;
+    if (this.options?.schema !== undefined) {
+      // A tagged template cannot name the schema: use the string form, values still bound.
+      if (typeof client.$queryRawUnsafe !== 'function') {
+        return this.getPermissionsViaDelegates(type, id, scope);
+      }
+      try {
+        const values: string[] = [type, id];
+        let tenantSql = '';
+        if (this.options.tenantScoped) {
+          values.push(GLOBAL_TENANT, scope?.tenantId ?? GLOBAL_TENANT);
+          tenantSql = ' AND ur."tenantId" IN ($3, $4)';
+        }
+        const rows = await client.$queryRawUnsafe<Array<{ name: string }>>(
+          `SELECT DISTINCT p."name" AS name FROM ${this.table('authz_permissions')} p ` +
+            `JOIN ${this.table('authz_role_permission')} rp ON rp."permissionId" = p."id" ` +
+            `JOIN ${this.table('authz_user_role')} ur ON ur."roleId" = rp."roleId" ` +
+            `WHERE ur."userType" = $1 AND ur."userId" = $2${tenantSql}`,
+          ...values,
+        );
+        return [...new Set(rows.map((r) => r.name))];
+      } catch {
+        return this.getPermissionsViaDelegates(type, id, scope);
+      }
+    }
     if (typeof client.$queryRaw === 'function') {
       try {
         // Single JOIN across the three documented `@@map` tables. Identifiers are

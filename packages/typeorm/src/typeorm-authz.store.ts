@@ -12,8 +12,8 @@ import {
   roleFilterNames,
 } from '@dudousxd/nestjs-authz/store-kit';
 import type { DataSource } from 'typeorm';
-import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT } from './entities.js';
-import { ensureAuthzSchema } from './schema.js';
+import { DEFAULT_TABLE_NAMES, GLOBAL_TENANT, assertSchemaName } from './entities.js';
+import { assertSchemaSupported, ensureAuthzSchema } from './schema.js';
 import { Placeholders } from './sql.js';
 import type { AuthzStoreOptions, RoleAssignmentScope, TenantScope } from './types.js';
 
@@ -26,7 +26,7 @@ export type { RoleAssignment, RoleAssignmentFilter, UserAuthz, UserRoleAssignmen
  * constructor — NOT `@Injectable`, no internal connection token (the app owns the
  * connection and plugs it via DI; see the persistence contract).
  *
- * BYO table names + an optional Postgres schema flow from {@link AuthzStoreOptions};
+ * BYO table names + an optional schema (Postgres schema / MySQL database) flow from {@link AuthzStoreOptions};
  * the store qualifies every table reference accordingly so it never assumes a name.
  */
 export class TypeOrmAuthzStore {
@@ -55,7 +55,8 @@ export class TypeOrmAuthzStore {
       assertSafeIdentifier(name, `table name (${key})`);
     }
     if (this.schema !== undefined) {
-      assertSafeIdentifier(this.schema, 'schema name');
+      assertSchemaName(this.schema);
+      assertSchemaSupported(dataSource, this.schema);
     }
   }
 

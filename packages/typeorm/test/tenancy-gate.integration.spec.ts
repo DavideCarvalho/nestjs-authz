@@ -1,5 +1,11 @@
 import 'reflect-metadata';
-import { AuthzModule, CONTEXT_ACCESSOR, Gate } from '@dudousxd/nestjs-authz';
+import {
+  type AuthzDevTool,
+  AuthzModule,
+  CONTEXT_ACCESSOR,
+  DEV_TOOLS_SLOT,
+  Gate,
+} from '@dudousxd/nestjs-authz';
 import { AuthorizationModule } from '@nestjs/authorization';
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -164,6 +170,86 @@ describeIntegration(`RBAC tenancy (context tenancy contract, ${targetDialect()})
     expect(await can(alice, 'posts.publish')).toBe(false);
     ctx.set(tenant('acme'));
     expect(await can(alice, 'posts.publish')).toBe(true); // via the plain tenantId
+    await moduleRef.close();
+  });
+  it('the dev tools explain a check in any tenant from the real store', async () => {
+    delete (globalThis as Record<symbol, unknown>)[DEV_TOOLS_SLOT];
+    await store.giveUserPermission(alice, 'reports.view');
+    const ctx = tenancyContext(true);
+    const { moduleRef } = await boot(ctx, { tenancy: { roles: { owner: 'org_admin' } } });
+    const tools = (
+      (globalThis as Record<symbol, { libs: Array<{ lib: string; tools: AuthzDevTool[] }> }>)[
+        DEV_TOOLS_SLOT
+      ]?.libs.find((l) => l.lib === 'authz')?.tools ?? []
+    ).reduce<Record<string, AuthzDevTool>>((all, t) => {
+      all[t.name] = t;
+      return all;
+    }, {});
+    const explain = tools.authz_explain_check as AuthzDevTool;
+
+    // The request is in globex; the tool asks about acme.
+    ctx.set(tenant('globex', 'owner'), alice);
+    expect(
+      await explain.run({ subjectId: '1', permission: 'posts.publish', tenantId: 'acme' }),
+    ).toMatchObject({
+      allowed: true,
+      reason: 'permission-provider',
+      tenant: { id: 'acme', from: 'explicit' },
+      effectiveRoles: ['editor'],
+      roleSources: { editor: ['store'] },
+      grantingRoles: [{ role: 'editor', matched: ['posts.publish'] }],
+      directGrants: [],
+    });
+    // Without tenantId: the request's own scope, where the caller's owner role maps to org_admin.
+    expect(await explain.run({ subjectId: '1', permission: 'billing.manage' })).toMatchObject({
+      allowed: true,
+      tenant: { id: 'globex', from: 'context' },
+      roleSources: { org_admin: ['tenant'] },
+      grantingRoles: [{ role: 'org_admin', matched: ['billing.manage'] }],
+    });
+    expect(
+      await explain.run({ subjectId: '1', permission: 'reports.view', tenantId: '' }),
+    ).toMatchObject({
+      allowed: true,
+      tenant: { id: null, from: 'global' },
+      directGrants: ['reports.view'],
+    });
+    expect(
+      await tools.authz_list_effective_permissions?.run({ subjectId: '1', tenantId: 'acme' }),
+    ).toMatchObject({ items: ['posts.publish', 'reports.view'], next: null });
+    await moduleRef.close();
+  });
+  it('a nested tenant: roles held at the clinic apply in its unit; required throws 403', async () => {
+    await store.givePermissionToRole('clinic_admin', 'staff.manage');
+    await store.assignRole(alice, 'clinic_admin', { tenantId: 'c1' });
+    await store.assignRole(alice, 'editor', { tenantId: 'u1' });
+    const ctx = tenancyContext(true);
+    const { moduleRef, can, gate } = await boot(ctx, { tenancy: { required: true } });
+    const unit: TenantFilter = {
+      mode: 'tenant',
+      tenant: {
+        id: 'u1',
+        kind: 'unit',
+        source: 'app',
+        chain: [
+          { id: 'c1', kind: 'clinic' },
+          { id: 'u1', kind: 'unit' },
+        ],
+      },
+    };
+    ctx.set(unit, alice);
+    expect(await can(alice, 'staff.manage')).toBe(true);
+    expect(await can(alice, 'posts.publish')).toBe(true);
+    // In the clinic itself, the unit's role does not apply.
+    ctx.set({ mode: 'tenant', tenant: { id: 'c1', kind: 'clinic', source: 'app' } }, alice);
+    expect(await can(alice, 'staff.manage')).toBe(true);
+    expect(await can(alice, 'posts.publish')).toBe(false);
+
+    ctx.set({ mode: 'tenantless' }, alice);
+    await expect(gate.forUser(alice).allows('staff.manage')).rejects.toMatchObject({
+      status: 403,
+      code: 'E_TENANT_REQUIRED',
+    });
     await moduleRef.close();
   });
 });

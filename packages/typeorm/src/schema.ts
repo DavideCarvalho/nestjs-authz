@@ -14,6 +14,7 @@ import {
   RolePermissionEntity,
   UserPermissionEntity,
   UserRoleEntity,
+  assertSchemaName,
 } from './entities.js';
 import type { AuthzStoreOptions, TableNames } from './types.js';
 
@@ -52,7 +53,7 @@ function plans(opts: AuthzStoreOptions | undefined): TablePlan[] {
   for (const [key, name] of Object.entries(names)) {
     assertSafeIdentifier(name, `table name (${key})`);
   }
-  if (schema !== undefined) assertSafeIdentifier(schema, 'schema name');
+  if (schema !== undefined) assertSchemaName(schema);
   return [
     { entity: RoleEntity, name: tableName(names.roles, schema) },
     { entity: PermissionEntity, name: tableName(names.permissions, schema) },
@@ -100,6 +101,71 @@ function tableFromMetadata(
   return table;
 }
 
+const SQLITE_TYPES = new Set([
+  'sqlite',
+  'better-sqlite3',
+  'sqljs',
+  'capacitor',
+  'cordova',
+  'expo',
+  'nativescript',
+  'react-native',
+]);
+
+/** Throws when `schema` is set on a connection that has no schemas (SQLite). */
+export function assertSchemaSupported(dataSource: DataSource, schema: string | undefined): void {
+  if (schema === undefined) return;
+  if (SQLITE_TYPES.has(String(dataSource.options.type))) {
+    throw new Error(
+      `nestjs-authz: \`schema: '${schema}'\` is not supported on SQLite (${dataSource.options.type}), which has no schemas. Remove \`schema\`, or use Postgres or MySQL.`,
+    );
+  }
+}
+
+const isMysql = (dataSource: DataSource) =>
+  ['mysql', 'mariadb', 'aurora-mysql'].includes(String(dataSource.options.type));
+
+/**
+ * Create `schema` (a Postgres schema, or a MySQL database) when it is missing. It checks the
+ * catalog first: `CREATE SCHEMA IF NOT EXISTS` needs the CREATE privilege even when the schema
+ * already exists.
+ */
+async function ensureSchemaExists(queryRunner: QueryRunner, schema: string): Promise<void> {
+  const dataSource = queryRunner.connection;
+  assertSchemaSupported(dataSource, schema);
+  const mysql = isMysql(dataSource);
+  const rows = (await queryRunner.query(
+    `SELECT 1 AS found FROM information_schema.schemata WHERE schema_name = ${mysql ? '?' : '$1'}`,
+    [schema],
+  )) as unknown[];
+  if (rows.length > 0) return;
+  const quoted = dataSource.driver.escape(schema);
+  try {
+    await queryRunner.query(
+      mysql ? `CREATE DATABASE IF NOT EXISTS ${quoted}` : `CREATE SCHEMA IF NOT EXISTS ${quoted}`,
+    );
+  } catch (error) {
+    const grant = mysql
+      ? `GRANT CREATE ON *.* TO <user>, or create the database \`${schema}\` yourself`
+      : `GRANT CREATE ON DATABASE <database> TO <role>, or create the schema "${schema}" yourself`;
+    throw new Error(
+      `nestjs-authz: could not create the ${mysql ? 'database' : 'schema'} ${JSON.stringify(schema)} for the authz tables (${(error as Error).message}). ${grant}.`,
+    );
+  }
+}
+
+/**
+ * The entity metadata for one authz table: the base entity's, or that of an
+ * {@link authzEntities} subclass registered in its place.
+ */
+function metadataFor(connection: DataSource, entity: new () => object): EntityMetadata {
+  const all = connection.entityMetadatas;
+  const found =
+    all.find((m) => m.target === entity) ??
+    all.find((m) => typeof m.target === 'function' && m.target.prototype instanceof entity);
+  return found ?? connection.getMetadata(entity);
+}
+
 /**
  * Create the RBAC tables (roles, permissions, and the two pivots) if they don't exist.
  * Strictly non-destructive — `CREATE TABLE` only runs for a table that is absent. Call it
@@ -118,9 +184,11 @@ export async function createAuthzTables(
   opts?: AuthzStoreOptions,
 ): Promise<void> {
   const driver = queryRunner.connection.driver;
-  for (const plan of plans(opts)) {
+  const tablePlans = plans(opts);
+  if (opts?.schema !== undefined) await ensureSchemaExists(queryRunner, opts.schema);
+  for (const plan of tablePlans) {
     if (await queryRunner.hasTable(plan.name)) continue;
-    const metadata = queryRunner.connection.getMetadata(plan.entity);
+    const metadata = metadataFor(queryRunner.connection, plan.entity);
     await queryRunner.createTable(
       tableFromMetadata(queryRunner.connection, metadata, driver, plan.name),
       true,
@@ -141,7 +209,7 @@ export async function createAuthzTables(
  * a default. `ADD COLUMN` of a NOT NULL column without a default fails on a populated table.
  */
 async function addMissingColumns(queryRunner: QueryRunner, plan: TablePlan): Promise<void> {
-  const metadata = queryRunner.connection.getMetadata(plan.entity);
+  const metadata = metadataFor(queryRunner.connection, plan.entity);
   const driver = queryRunner.connection.driver;
   const table = await queryRunner.getTable(plan.name);
   if (!table) return;
@@ -174,14 +242,17 @@ export async function ensureAuthzSchema(
   dataSource: DataSource,
   opts?: AuthzStoreOptions,
 ): Promise<void> {
+  assertSchemaSupported(dataSource, opts?.schema);
+  const tablePlans = plans(opts);
   const queryRunner = dataSource.createQueryRunner();
   try {
     const driver = dataSource.driver;
-    for (const plan of plans(opts)) {
+    if (opts?.schema !== undefined) await ensureSchemaExists(queryRunner, opts.schema);
+    for (const plan of tablePlans) {
       if (await queryRunner.hasTable(plan.name)) {
         await addMissingColumns(queryRunner, plan);
       } else {
-        const metadata = queryRunner.connection.getMetadata(plan.entity);
+        const metadata = metadataFor(queryRunner.connection, plan.entity);
         await queryRunner.createTable(
           tableFromMetadata(queryRunner.connection, metadata, driver, plan.name),
           true,

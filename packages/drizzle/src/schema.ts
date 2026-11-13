@@ -68,7 +68,12 @@ const ref = (name: string) => varchar(name, { length: 191 }).notNull();
  */
 export function createAuthzTables(opts: Pick<AuthzStoreOptions, 'tableNames' | 'schema'> = {}) {
   const names = resolveTableNames(opts.tableNames);
-  if (opts.schema !== undefined) assertSafeIdentifier(opts.schema, 'schema name');
+  if (opts.schema !== undefined) {
+    assertSafeIdentifier(opts.schema, 'schema name');
+    if (opts.schema.length > 63) {
+      throw new Error(`Schema name ${JSON.stringify(opts.schema)} is longer than 63 characters.`);
+    }
+  }
   // `pgSchema('public')` is rejected by drizzle — the default schema IS `pgTable`.
   const table = (
     opts.schema === undefined ? pgTable : pgSchema(opts.schema).table

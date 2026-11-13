@@ -63,7 +63,9 @@ export class MikroOrmAuthzStore {
   constructor(
     private readonly em: EntityManager,
     _opts: Record<string, never> = {},
-  ) {}
+  ) {
+    assertSchemaSupported(em);
+  }
 
   /** Create/upgrade the RBAC tables (non-destructive, delegates to {@link ensureAuthzSchema}). */
   ensureSchema(): Promise<void> {
@@ -234,12 +236,13 @@ export class MikroOrmAuthzStore {
       if (!field) throw new Error(`Missing column metadata for ${m.className}.${prop}`);
       return field;
     };
+    const table = (m: typeof role) => tableRef(em, m);
     // Identifiers come from entity metadata (trusted); role names are bound parameters.
     const sql =
       `select r.${col(role, 'name')} as role, p.${col(perm, 'name')} as permission ` +
-      `from ${role.tableName} r ` +
-      `left join ${rolePerm.tableName} rp on rp.${col(rolePerm, 'roleId')} = r.${col(role, 'id')} ` +
-      `left join ${perm.tableName} p on p.${col(perm, 'id')} = rp.${col(rolePerm, 'permissionId')} ` +
+      `from ${table(role)} r ` +
+      `left join ${table(rolePerm)} rp on rp.${col(rolePerm, 'roleId')} = r.${col(role, 'id')} ` +
+      `left join ${table(perm)} p on p.${col(perm, 'id')} = rp.${col(rolePerm, 'permissionId')} ` +
       `where r.${col(role, 'name')} in (${names.map(() => '?').join(', ')})`;
     const rows = (await em.getConnection().execute(sql, names)) as Array<{
       role: string;
@@ -462,13 +465,13 @@ export class MikroOrmAuthzStore {
       return field;
     };
 
-    const permTable = perm.tableName;
+    const permTable = tableRef(em, perm);
     const permId = col(perm, 'id');
     const permName = col(perm, 'name');
-    const rpTable = rolePerm.tableName;
+    const rpTable = tableRef(em, rolePerm);
     const rpRoleId = col(rolePerm, 'roleId');
     const rpPermId = col(rolePerm, 'permissionId');
-    const urTable = userRole.tableName;
+    const urTable = tableRef(em, userRole);
     const urRoleId = col(userRole, 'roleId');
     const urUserType = col(userRole, 'userType');
     const urUserId = col(userRole, 'userId');
@@ -518,5 +521,33 @@ export class MikroOrmAuthzStore {
   ): Promise<boolean> {
     const permissions = await this.getPermissionsForUser(user, scope);
     return permissions.includes(permission);
+  }
+}
+
+/**
+ * A table reference for raw SQL: the bare table name, as before, or the quoted
+ * `"schema"."table"` when the entity was built with `createAuthzEntitySchemas(…, { schema })`.
+ */
+function tableRef(
+  em: EntityManager,
+  meta: { tableName: string; schema?: string | undefined },
+): string {
+  const schema = meta.schema;
+  if (schema === undefined || schema === '' || schema === '*') return meta.tableName;
+  return em.getPlatform().quoteIdentifier(`${schema}.${meta.tableName}`);
+}
+
+/** Throws when the authz entities carry a `schema` on a SQLite connection (no schemas there). */
+export function assertSchemaSupported(em: EntityManager): void {
+  const platform = em.getPlatform().constructor.name;
+  if (!/sqlite/i.test(platform)) return;
+  const metadata = em.getMetadata();
+  for (const entity of [RoleEntity, PermissionEntity, RolePermissionEntity, UserRoleEntity]) {
+    const schema = metadata.find(entity.name)?.schema;
+    if (schema !== undefined && schema !== '' && schema !== '*') {
+      throw new Error(
+        `nestjs-authz: \`schema: '${schema}'\` is not supported on SQLite, which has no schemas. Build the entities without \`schema\`, or use Postgres or MySQL.`,
+      );
+    }
   }
 }

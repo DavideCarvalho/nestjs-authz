@@ -16,6 +16,7 @@ export type {
   BatchItem,
   BatchPolicyCheck,
   BatchResult,
+  GateExplanation,
 } from './gate.js';
 
 // Official policies and the super-admin base class
@@ -65,7 +66,32 @@ export { currentUserOf } from './runtime.js';
 export { AuthzRbac } from './rbac.js';
 export type { PermissionProvider } from './permission-provider.js';
 export { defaultRoleResolver } from './role-provider.js';
-export type { RoleProvider, RoleResolver } from './role-provider.js';
+export type { RbacDescription, RoleProvider, RoleResolver } from './role-provider.js';
+export {
+  TENANT_SCOPE_SLOT,
+  currentTenantScopeOverride,
+  runInTenantScope,
+  runWithoutRequiredTenant,
+} from './tenant-override.js';
+export type { TenantScopeOverride } from './tenant-override.js';
+
+// Dev MCP tools (`@dudousxd/nestjs-agent-mcp-server`'s dev endpoint)
+export {
+  AuthzDevTools,
+  DEV_TOOLS_SLOT,
+  authzDevTools,
+  registerAuthzDevTools,
+} from './dev-tools.js';
+export type {
+  AuthzDevTool,
+  AuthzDevToolsDeps,
+  AuthzDevToolsOptions,
+  AuthzDevToolsRef,
+  DevToolCall,
+  DevToolInputProperty,
+  DevToolInputSchema,
+  DevToolsRegistration,
+} from './dev-tools.js';
 export {
   CompiledPermissions,
   permissionMatches,

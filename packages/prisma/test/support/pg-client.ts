@@ -52,8 +52,9 @@ function buildWhere(where: Where): { text: string; values: unknown[] } {
 }
 
 /** A real pg-backed model delegate for one table. */
-export function makeDelegate(pool: Pool, table: string): PrismaModelDelegate {
-  const tbl = quoteId(table);
+export function makeDelegate(pool: Pool, table: string, schema?: string): PrismaModelDelegate {
+  // With `schema`, the delegate behaves like a model with `@@schema(schema)`.
+  const tbl = schema === undefined ? quoteId(table) : `${quoteId(schema)}.${quoteId(table)}`;
   return {
     async create(args: { data: Row }) {
       const cols = Object.keys(args.data);

@@ -1,0 +1,75 @@
+---
+title: MCP dev tools
+description: Let your coding agent ask why a user can or cannot do something, and list a user's effective roles and permissions, over the Aviary dev MCP endpoint.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+With [`@dudousxd/nestjs-agent-mcp-server`](/docs/agent/guides/dev-tools-over-mcp) mounted, `AuthzModule`
+adds read-only tools to the developer MCP endpoint (`/mcp/aviary`), next to the other Aviary
+libraries' tools. Connect Claude Code (or any MCP client) to it, then ask things like *"why can't
+user 42 update post 7?"* or *"which roles does user 42 have in tenant acme?"*.
+
+| Tool | What it returns |
+| --- | --- |
+| `authz_explain_check` | The verdict for `subjectId` + `permission` (optional `subjectType`, `tenantId`, `resourceType` + `resourceId`): its `reason`, the `policy` that decided, whether `superAdmin` granted it, what the decision provider said (`decisionProvider` and its `message`), the subject's effective roles with their sources, and which roles (`grantingRoles`) or direct grants (`directGrants`) cover the permission |
+| `authz_list_effective_roles` | A subject's roles in a tenant, each with where it comes from: `user` (the user object or `resolveRoles`), `store` (the RBAC adapter), `tenant` (the caller's tenant role mapped by `tenancy.roles`) |
+| `authz_list_effective_permissions` | A subject's permissions in a tenant, role-derived and direct, wildcards as stored (`limit`, `page`) |
+
+Lists return `{ items, next }`: pass `next` as `page` to get the following page.
+
+`reason` is one of `super-admin`, `decision-provider`, `policy`, `permission-provider`, `gate`,
+`anonymous`, or `unresolved` when no policy, permission or `gate.define()` knows the ability. The
+tools never publish an `authz:decision` event.
+
+## Tenants
+
+Without `tenantId`, a check runs where the app's own checks would run in that request. Pass a
+tenant id to check inside that tenant, or `tenantId: ''` for the global scope. The answer's
+`tenant.from` says which: `explicit`, `context` or `global`.
+
+<Callout>
+Roles that `tenancy.roles` maps from the caller's role inside the context tenant belong to whoever
+makes the request. For any other subject the tools show only the user and store roles.
+</Callout>
+
+## Who may use them
+
+authz has no console, so the dev endpoint's `devTools.authorize` decides. Without it the tools are
+open outside production and denied in production:
+
+```ts
+import { authorizeByToken } from '@dudousxd/nestjs-agent-dashboard';
+
+AgentMcpServerModule.forRoot({
+  name: 'Acme',
+  version: '1.0.0',
+  // …
+  devTools: { authorize: authorizeByToken({ token: process.env.DEV_TOOLS_TOKEN }) },
+});
+```
+
+An older `@dudousxd/nestjs-agent-mcp-server` that cannot gate a library without a console does not
+get the tools.
+
+## Load your models
+
+Policies, the `superAdmin` hook and a decision provider (Cerbos…) usually read fields of your
+models, not `{ type, id }` refs. Give the tools loaders:
+
+```ts
+AuthzModule.forRoot({
+  devTools: {
+    loadSubject: (ref) => (ref.type === 'user' ? users.findById(ref.id) : undefined),
+    loadResource: (ref) => (ref.type === 'Post' ? posts.findById(ref.id) : undefined),
+  },
+});
+```
+
+Without `loadSubject`, the tools use `resolveUser` when you configured it. Without
+`loadResource`, they use the [`resourceLoaders`](/docs/authz/resource-resolution) entry of that type.
+With neither, checks receive the `{ type, id }` ref, and policies linked with `@PolicyFor` do not
+apply to the resource. The answer says whether each was loaded (`subjectLoaded`,
+`resourceLoaded`).
+
+`devTools: false` leaves the tools out.

@@ -1,5 +1,6 @@
 import type { Type } from '@nestjs/common';
 import type { UserRef } from './context-accessor.js';
+import type { AuthzDevToolsOptions } from './dev-tools.js';
 import type { ResourceResolver } from './resource-resolver.js';
 
 /** A resource passed to a policy ability. authz never inspects it; the policy does. */
@@ -98,6 +99,12 @@ export interface AuthzModuleOptions extends AuthzModuleStaticOptions {
   idParam?: string;
   /** Loaders that turn the endpoint's `{ type, id }` into the real entity, keyed by type. */
   resourceLoaders?: ResourceLoaderMap;
+  /**
+   * Developer tools on the Aviary dev MCP endpoint (`@dudousxd/nestjs-agent-mcp-server`), gated
+   * by its `devTools.authorize`. Default `true`; `false` leaves them out. An object turns them on
+   * with `loadSubject` / `loadResource`, so checks see your models instead of `{ type, id }` refs.
+   */
+  devTools?: boolean | AuthzDevToolsOptions;
 }
 
 export interface AuthzModuleOptionsFactory {

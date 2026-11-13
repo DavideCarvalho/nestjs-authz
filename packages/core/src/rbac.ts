@@ -6,7 +6,12 @@ import type { DecisionProvider } from './decision-provider.js';
 import { PermissionCache } from './permission-cache.js';
 import { permissionSatisfied } from './permission-matcher.js';
 import type { PermissionProvider } from './permission-provider.js';
-import { type RoleProvider, type RoleResolver, defaultRoleResolver } from './role-provider.js';
+import {
+  type RbacDescription,
+  type RoleProvider,
+  type RoleResolver,
+  defaultRoleResolver,
+} from './role-provider.js';
 import {
   AUTHZ_MODULE_OPTIONS,
   CONTEXT_ACCESSOR,
@@ -237,6 +242,32 @@ export class AuthzRbac implements OnModuleInit {
       }
     }
     return out;
+  }
+
+  /**
+   * Where `user`'s roles come from, for the dev tools: the role resolver (the user object or
+   * `resolveRoles`), the role provider, and the provider's own breakdown (`describeRbac`, store
+   * vs `tenancy.roles`) when the adapter has one. Never cached: each call reads afresh.
+   */
+  async roleSourcesOf(user: User): Promise<{
+    user: string[];
+    provider: string[];
+    rbac: RbacDescription | undefined;
+  }> {
+    if (user == null) return { user: [], provider: [], rbac: undefined };
+    const strings = (list: unknown): string[] =>
+      Array.isArray(list) ? list.filter((r): r is string => typeof r === 'string') : [];
+    const provider = this.roles();
+    const [fromUser, fromProvider, rbac] = await Promise.all([
+      this.roleResolver(user),
+      provider ? provider.getRoles(user) : undefined,
+      typeof provider?.describeRbac === 'function' ? provider.describeRbac(user) : undefined,
+    ]);
+    return {
+      user: [...new Set(strings(fromUser))],
+      provider: [...new Set(strings(fromProvider))],
+      rbac: rbac ?? undefined,
+    };
   }
 
   /** True when the user holds any of `roles`. A guest holds none. */

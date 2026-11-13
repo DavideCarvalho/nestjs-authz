@@ -24,6 +24,8 @@ import {
   type RbacTenant,
   type TenantContextAccessor,
   type TenantResolver,
+  acrossScopes,
+  inAnyScope,
   rbacTenant,
 } from './tenancy.js';
 import type { AuthzStoreOptions } from './types.js';
@@ -195,7 +197,13 @@ class RbacPermissionProvider implements PermissionProvider {
     const ref = map(user);
     if (ref === undefined) return undefined;
     const tenant = this.tenant(user, ref);
-    if (await this.options.store.userHasPermission(ref, permission, tenant.scope)) return true;
+    if (
+      await inAnyScope(tenant, (scope) =>
+        this.options.store.userHasPermission(ref, permission, scope),
+      )
+    ) {
+      return true;
+    }
     return (await this.tenantRolePermissions(tenant.roles)).includes(permission);
   }
 
@@ -208,7 +216,9 @@ class RbacPermissionProvider implements PermissionProvider {
     const ref = map(user);
     if (ref === undefined) return undefined;
     const tenant = this.tenant(user, ref);
-    const own = await this.options.store.getPermissionsForUser(ref, tenant.scope);
+    const own = await acrossScopes(tenant, (scope) =>
+      this.options.store.getPermissionsForUser(ref, scope),
+    );
     if (tenant.roles.length === 0) return own;
     return [...new Set([...own, ...(await this.tenantRolePermissions(tenant.roles))])];
   }
@@ -248,7 +258,9 @@ class RbacRoleProvider implements RoleProvider {
       this.contextCache,
       true,
     );
-    const own = await this.options.store.getRolesForUser(ref, tenant.scope);
+    const own = await acrossScopes(tenant, (scope) =>
+      this.options.store.getRolesForUser(ref, scope),
+    );
     return tenant.roles.length === 0 ? own : [...new Set([...own, ...tenant.roles])];
   }
 
@@ -260,6 +272,7 @@ class RbacRoleProvider implements RoleProvider {
   async describeRbac(user: unknown): Promise<
     | {
         tenantId: string | null;
+        tenantChain: string[];
         roles: { store: string[]; tenant: string[] };
         rolePermissions: Record<string, string[]>;
         permissions: string[];
@@ -279,8 +292,8 @@ class RbacRoleProvider implements RoleProvider {
       true,
     );
     const [own, permissions] = await Promise.all([
-      this.options.store.getRolesForUser(ref, tenant.scope),
-      this.options.store.getPermissionsForUser(ref, tenant.scope),
+      acrossScopes(tenant, (scope) => this.options.store.getRolesForUser(ref, scope)),
+      acrossScopes(tenant, (scope) => this.options.store.getPermissionsForUser(ref, scope)),
     ]);
     const roles = [...new Set([...own, ...tenant.roles])];
     const rolePermissions =
@@ -288,6 +301,7 @@ class RbacRoleProvider implements RoleProvider {
     const fromTenantRoles = tenant.roles.flatMap((role) => rolePermissions[role] ?? []);
     return {
       tenantId: tenant.scope.tenantId ?? null,
+      tenantChain: tenant.scopes.flatMap((scope) => (scope.tenantId ? [scope.tenantId] : [])),
       roles: { store: own, tenant: tenant.roles },
       rolePermissions,
       permissions: [...new Set([...permissions, ...fromTenantRoles])],

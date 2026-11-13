@@ -208,6 +208,88 @@ Adapter specifics:
 - **Prisma** — consumer-managed: Prisma owns the schema, so you add the models to your `schema.prisma` and run `prisma migrate`; the adapter reads/writes through your `PrismaClient`.
 - **Drizzle (Postgres)** — `DrizzleAuthzStore(db)`. `createAuthzTables({ tableNames, schema })` returns the tables as `pgTable`s. Spread them into your drizzle-kit schema and pass the same object to the store (`{ tables }`), and drizzle-kit owns the migration. Because the schema is usually drizzle-kit's, `autoCreateSchema` defaults to `false` here. Turn it on to run the idempotent `CREATE ... IF NOT EXISTS` instead. The package also compiles `gate.scope(Entity)` into a Drizzle `WHERE`: `db.select().from(posts).where(await applyScope(gate.forUser(user), Post, posts))`.
 
+### Database schema
+
+Put the authz tables in their own database schema (a Postgres schema, or a MySQL database) with
+`schema`. Every statement the adapter issues names it (`"authz"."authz_roles"`), so the app's own
+tables stay in `public` and nothing depends on `search_path`.
+
+<Callout type="warn">
+Don't use `search_path` for this. Behind PgBouncer in transaction mode a `SET search_path` leaks
+to whichever request gets that connection next.
+</Callout>
+
+**TypeORM** (Postgres and MySQL):
+
+```ts
+AuthzRbacModule.forRoot({ connectionName: 'default', storeOptions: { schema: 'authz' } });
+```
+
+`autoCreateSchema` creates the schema (on MySQL, the database) when it is missing. If your
+DataSource synchronizes or generates migrations from entities, register
+`authzEntities({ schema: 'authz', type: 'postgres' })` (`type: 'mysql'` on MySQL) instead of
+`AUTHZ_ENTITIES`. `createAuthzTables(queryRunner, { schema: 'authz' })` does the same from a migration.
+
+**Drizzle** (Postgres):
+
+```ts
+export const authz = createAuthzTables({ schema: 'authz' }); // pgSchema('authz') tables
+AuthzRbacModule.forRoot({ store: new DrizzleAuthzStore(db, { tables: authz }) });
+```
+
+drizzle-kit then puts them in `authz`. With `autoCreateSchema: true`, `ensureSchema` creates the
+schema and the tables.
+
+**MikroORM** (Postgres and MySQL): build the entities with the schema and register them as usual:
+
+```ts
+const authz = createAuthzEntitySchemas({}, { schema: 'authz' });
+MikroOrmModule.forRoot({ entities: [...authz.all, ...appEntities] });
+```
+
+The store reads the schema from the entity metadata. `autoCreateSchema` creates the schema (on
+MySQL, the database) and the tables, and `authzSchemaSql()` gives the same statements for a migration.
+
+**Prisma** (Postgres): Prisma owns the schema, so turn on `multiSchema` and put the four models in
+the schema with `@@schema`. Then tell the store:
+
+```prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"] // not needed on Prisma 6.13+
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "authz"]
+}
+
+model AuthzRole {
+  // …fields as above…
+  @@map("authz_roles")
+  @@schema("authz")
+}
+// …@@schema("authz") on AuthzPermission, AuthzRolePermission and AuthzUserRole too
+```
+
+```ts
+AuthzRbacModule.forRoot({ client: prisma, schema: 'authz' });
+```
+
+The permission read then runs as one `$queryRawUnsafe` with the schema in the SQL and every value
+bound.
+
+Rules for every adapter:
+
+- The name must be a plain identifier (letters, digits, `_`) of at most 63 characters.
+- SQLite has no schemas, so `schema` there fails at boot with a clear error. Prisma only supports
+  `@@schema` on Postgres, so on MySQL or SQLite the Prisma store refuses `schema`.
+- Creating the schema needs the `CREATE` privilege (`GRANT CREATE ON DATABASE … TO …`; on MySQL,
+  `CREATE` on the server). The adapters check first and only create it when it is missing. When
+  your role can't create it, create it yourself once.
+- Without `schema`, nothing changes.
+
 ### Role sources (manual vs SSO/SCIM)
 
 Every role assignment records a `source`. It defaults to `'manual'`, so existing calls and rows
@@ -271,7 +353,8 @@ sets the tenant of each request with `Context.setTenant(...)` (see the
 | Request | Assignments that count |
 |---------|------------------------|
 | Has a tenant | global ones, plus that tenant's |
-| No tenant, or a tenant of a kind outside `kinds` | global ones |
+| Has a nested tenant (a unit inside a clinic) | global ones, plus those of every level of the chain the module honours |
+| No tenant, or a tenant of a kind outside `kinds` | global ones (an error with `required`) |
 | Inside `Context.allTenants()`, or outside any request | global ones |
 
 Each RBAC module takes the same `tenancy` option:
@@ -282,6 +365,8 @@ AuthzRbacModule.forRoot({
   tenancy: {
     enabled: 'inherit',         // default: follow ContextModule; true/false to override
     kinds: ['organization'],    // optional: tenant kinds this module honours
+    family: 'account',          // optional: only the tenant of this family counts
+    required: true,             // optional: a check with no tenant is a 403 (default: the context's)
     roles: {                    // optional: the caller's role inside the tenant → authz roles
       owner: 'org_admin',
       member: ['org_member', 'reader'],
@@ -297,6 +382,19 @@ AuthzRbacModule.forRoot({
   `store.syncRolePermissions('org_admin', ['billing.manage'])`. Unmapped roles grant nothing.
   The mapped roles belong to the current user of the context (`Context.userRef()`), so
   `gate.forUser(someoneElse)` does not get them.
+- With nested tenants (`Context.setTenant({ id: 'u1', kind: 'unit', chain: [clinic] })`), a role
+  assigned in the clinic also counts inside its units, and the caller's role at each level is
+  mapped by `roles`. `kinds` picks the levels: with `kinds: ['clinic', 'unit']` both count, with
+  `kinds: ['unit']` only the unit does. The level the request's tenant matched always counts,
+  since the context only matches a level whose kind is listed.
+- `required` turns a check with no tenant into a `TenantRequiredError` (403,
+  `code: 'E_TENANT_REQUIRED'`) instead of a check in the global scope. Each package (context and
+  every adapter) throws its own class, so match on `error.code === 'E_TENANT_REQUIRED'`, not
+  `instanceof`. It defaults to the
+  context's `tenancy.required`. Checks that are not about tenant data never require a tenant:
+  the Aviary console `authorize` helpers, the MCP dev tools, and any code you wrap in
+  `runWithoutRequiredTenant(() => …)` from `@dudousxd/nestjs-authz`. A `tenant` resolver that
+  answers, or `runInTenantScope(tenantId, () => …)`, also never needs one.
 - `nullRows` is accepted for the shared shape but changes nothing here: a global assignment
   always applies.
 

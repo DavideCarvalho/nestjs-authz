@@ -39,7 +39,12 @@ export interface AuthzStoreOptions {
   tables?: AuthzTables;
   /** BYO table names; each defaults to the matching {@link DEFAULT_TABLE_NAMES} entry. Ignored with `tables`. */
   tableNames?: TableNames;
-  /** Optional Postgres schema (NOT a connection). Ignored with `tables`. */
+  /**
+   * Put the authz tables in this Postgres schema (NOT a connection). Every statement names it
+   * (`"authz"."authz_roles"`); `search_path` is never used, so it is safe behind PgBouncer in
+   * transaction mode. `ensureSchema` creates it when missing. Ignored with `tables` (build them
+   * with `createAuthzTables({ schema })`).
+   */
   schema?: string;
 }
 

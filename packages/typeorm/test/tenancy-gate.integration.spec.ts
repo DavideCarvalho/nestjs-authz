@@ -219,4 +219,37 @@ describeIntegration(`RBAC tenancy (context tenancy contract, ${targetDialect()})
     ).toMatchObject({ items: ['posts.publish', 'reports.view'], next: null });
     await moduleRef.close();
   });
+  it('a nested tenant: roles held at the clinic apply in its unit; required throws 403', async () => {
+    await store.givePermissionToRole('clinic_admin', 'staff.manage');
+    await store.assignRole(alice, 'clinic_admin', { tenantId: 'c1' });
+    await store.assignRole(alice, 'editor', { tenantId: 'u1' });
+    const ctx = tenancyContext(true);
+    const { moduleRef, can, gate } = await boot(ctx, { tenancy: { required: true } });
+    const unit: TenantFilter = {
+      mode: 'tenant',
+      tenant: {
+        id: 'u1',
+        kind: 'unit',
+        source: 'app',
+        chain: [
+          { id: 'c1', kind: 'clinic' },
+          { id: 'u1', kind: 'unit' },
+        ],
+      },
+    };
+    ctx.set(unit, alice);
+    expect(await can(alice, 'staff.manage')).toBe(true);
+    expect(await can(alice, 'posts.publish')).toBe(true);
+    // In the clinic itself, the unit's role does not apply.
+    ctx.set({ mode: 'tenant', tenant: { id: 'c1', kind: 'clinic', source: 'app' } }, alice);
+    expect(await can(alice, 'staff.manage')).toBe(true);
+    expect(await can(alice, 'posts.publish')).toBe(false);
+
+    ctx.set({ mode: 'tenantless' }, alice);
+    await expect(gate.forUser(alice).allows('staff.manage')).rejects.toMatchObject({
+      status: 403,
+      code: 'E_TENANT_REQUIRED',
+    });
+    await moduleRef.close();
+  });
 });

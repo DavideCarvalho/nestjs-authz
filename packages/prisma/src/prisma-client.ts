@@ -128,6 +128,14 @@ export interface PrismaAuthzClientLike {
   $queryRaw?<T = unknown>(query: TemplateStringsArray, ...values: any[]): Promise<T>;
 
   /**
+   * OPTIONAL raw query with a SQL string and bound values (a real `PrismaClient` provides it).
+   * Used for the single-JOIN fast path when the tables live in their own `schema`, since a
+   * tagged template cannot name a schema; values are always bound (`$1`, `$2`, …).
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: see doc — keeps a real PrismaClient structurally assignable.
+  $queryRawUnsafe?<T = unknown>(query: string, ...values: any[]): Promise<T>;
+
+  /**
    * OPTIONAL interactive transaction (a real `PrismaClient` provides it). Used by the
    * multi-statement mutations (`setUserRoles`, `syncRolePermissions`, `deleteRole`) so they are
    * atomic; clients without it run the steps sequentially.
@@ -152,6 +160,13 @@ export interface PrismaAuthzStoreOptions {
    * throws.
    */
   tenantScoped?: boolean;
+  /**
+   * The Postgres schema the authz models live in (`@@schema("authz")` with Prisma's
+   * `multiSchema`). Prisma names it in every model query; the store's raw SQL fast path names it
+   * too (`"authz"."authz_permissions"`), so nothing relies on `search_path`. Postgres only:
+   * Prisma has no `@@schema` on MySQL or SQLite, and the store throws there when it can tell.
+   */
+  schema?: string;
 }
 
 /** DI token for optional {@link PrismaAuthzStoreOptions}. */

@@ -1,3 +1,4 @@
+import { assertSafeIdentifier } from '@dudousxd/nestjs-authz';
 import { DEFAULT_ROLE_SOURCE } from '@dudousxd/nestjs-authz/store-kit';
 import { EntityRepositoryType, EntitySchema } from '@mikro-orm/core';
 import {
@@ -107,6 +108,24 @@ export interface AuthzEntitySchemaOptions {
    * and every assignment is global.
    */
   tenantScoped?: boolean;
+  /**
+   * Put the four tables in this schema: a Postgres schema, or a MySQL database. MikroORM names
+   * it in every query (`"authz"."authz_roles"`), the store qualifies its raw SQL and
+   * `ensureAuthzSchema` creates it when missing; `search_path` is never used, so it is safe
+   * behind PgBouncer in transaction mode. SQLite has no schemas: the store throws there.
+   */
+  schema?: string;
+}
+
+/**
+ * Validate a `schema` option: a safe identifier (letters, digits, `_`, not starting with a
+ * digit) of at most 63 characters (the Postgres limit; MySQL allows 64).
+ */
+export function assertSchemaName(schema: string): void {
+  assertSafeIdentifier(schema, 'schema name');
+  if (schema.length > 63) {
+    throw new Error(`Schema name ${JSON.stringify(schema)} is longer than 63 characters.`);
+  }
 }
 
 /** The four {@link EntitySchema} definitions produced by {@link createAuthzEntitySchemas}. */
@@ -145,10 +164,17 @@ export function createAuthzEntitySchemas(
   options: AuthzEntitySchemaOptions = {},
 ): AuthzEntitySchemas {
   const names: AuthzTableNames = { ...DEFAULT_TABLE_NAMES, ...tableNames };
+  for (const [key, name] of Object.entries(names)) {
+    assertSafeIdentifier(name, `table name "${key}"`);
+  }
+  const schema = options.schema;
+  if (schema !== undefined) assertSchemaName(schema);
+  const where = schema === undefined ? {} : { schema };
 
   const role = new EntitySchema<RoleEntity>({
     class: RoleEntity,
     tableName: names.roles,
+    ...where,
     repository: () => AuthzRoleRepository,
     properties: {
       id: { type: 'string', length: 191, primary: true },
@@ -166,6 +192,7 @@ export function createAuthzEntitySchemas(
   const permission = new EntitySchema<PermissionEntity>({
     class: PermissionEntity,
     tableName: names.permissions,
+    ...where,
     repository: () => AuthzPermissionRepository,
     properties: {
       id: { type: 'string', length: 191, primary: true },
@@ -183,6 +210,7 @@ export function createAuthzEntitySchemas(
   const rolePermission = new EntitySchema<RolePermissionEntity>({
     class: RolePermissionEntity,
     tableName: names.rolePermission,
+    ...where,
     repository: () => AuthzRolePermissionRepository,
     properties: {
       roleId: { type: 'string', length: 191, primary: true },
@@ -193,6 +221,7 @@ export function createAuthzEntitySchemas(
   const userRole = new EntitySchema<UserRoleEntity>({
     class: UserRoleEntity,
     tableName: names.userRole,
+    ...where,
     repository: () => AuthzUserRoleRepository,
     properties: {
       userType: { type: 'string', length: 191, primary: true },

@@ -71,6 +71,7 @@ export {
   TENANT_SCOPE_SLOT,
   currentTenantScopeOverride,
   runInTenantScope,
+  runWithoutRequiredTenant,
 } from './tenant-override.js';
 export type { TenantScopeOverride } from './tenant-override.js';
 

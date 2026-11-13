@@ -226,7 +226,10 @@ export function createAuthzEntitySchemas(
     properties: {
       userType: { type: 'string', length: 191, primary: true },
       userId: { type: 'string', length: 191, primary: true },
-      roleId: { type: 'string', length: 191, primary: true },
+      // 64 with `tenantScoped` (as in the TypeORM adapter): role ids are store-generated UUIDs,
+      // and the 5-column key must stay under MySQL/utf8mb4's 3072-byte index limit
+      // ((191 + 191 + 64 + 64 + 191) chars × 4 bytes = 2804; with 191 here it was 3312).
+      roleId: { type: 'string', length: options.tenantScoped ? 64 : 191, primary: true },
       source: {
         type: 'string',
         length: 64,

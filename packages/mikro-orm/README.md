@@ -220,7 +220,8 @@ tenant's scoped assignments only. Without the tenant column (below) every row ha
 ## Tenant-scoped roles
 
 Build the entities with `tenantScoped: true` to assign roles per tenant. The user-role table
-gets a `tenant_id` column (default `''`, a global assignment) in its primary key:
+gets a `tenant_id` column (default `''`, a global assignment) in its primary key. Its `role_id`
+is 64 characters (role ids are UUIDs), so the 5-column key fits MySQL's 3072-byte limit:
 
 ```ts
 import { createAuthzEntitySchemas } from '@dudousxd/nestjs-authz-mikro-orm';
@@ -249,8 +250,8 @@ can be assigned in two tenants:
 -- PostgreSQL (default constraint name; check yours with \d authz_user_role)
 ALTER TABLE authz_user_role DROP CONSTRAINT authz_user_role_pkey,
   ADD PRIMARY KEY (user_type, user_id, role_id, source, tenant_id);
--- MySQL
-ALTER TABLE authz_user_role DROP PRIMARY KEY,
+-- MySQL (role_id shrinks to 64 characters so the key fits MySQL's 3072-byte limit)
+ALTER TABLE authz_user_role DROP PRIMARY KEY, MODIFY role_id varchar(64) NOT NULL,
   ADD PRIMARY KEY (user_type, user_id, role_id, source, tenant_id);
 -- SQLite: recreate the table with the 5-column key (SQLite cannot alter a primary key).
 ```

@@ -411,7 +411,8 @@ AuthzRbacModule.forRoot({
 ### Tenant column for MikroORM and Prisma
 
 **MikroORM:** build the entities with `tenantScoped: true`. `ensureSchema` (or `authzSchemaSql`)
-adds a `tenant_id` column, default `''` (global), to the user-role table:
+adds a `tenant_id` column, default `''` (global), to the user-role table, and its `role_id` is 64
+characters so the key fits on MySQL:
 
 ```ts
 import { createAuthzEntitySchemas } from '@dudousxd/nestjs-authz-mikro-orm';

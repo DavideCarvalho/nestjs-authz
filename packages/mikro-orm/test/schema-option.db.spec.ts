@@ -126,10 +126,8 @@ describeDb(`schema option (${dialect})`, () => {
       opened.pop();
       return orm;
     });
-    // MySQL caps a primary key at 3072 bytes, which the tenant-scoped user-role key exceeds
-    // under utf8mb4 (with or without a schema), so tenants are covered on Postgres.
-    const tenantScoped = dialect !== 'mysql';
-    const authz = createAuthzEntitySchemas(tables, { schema, tenantScoped });
+    // Tenant-scoped on both dialects: the 5-column user-role key fits MySQL's 3072-byte limit.
+    const authz = createAuthzEntitySchemas(tables, { schema, tenantScoped: true });
     const orm = await open(authz.all);
     return { orm, em: orm.em as unknown as EntityManager, schema, prefix, tables };
   }

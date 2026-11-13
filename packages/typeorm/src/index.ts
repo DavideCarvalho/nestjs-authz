@@ -1,6 +1,8 @@
 export {
   AUTHZ_ENTITIES,
+  type AuthzEntitiesOptions,
   DEFAULT_TABLE_NAMES,
+  authzEntities,
   GLOBAL_TENANT,
   PermissionEntity,
   RoleEntity,

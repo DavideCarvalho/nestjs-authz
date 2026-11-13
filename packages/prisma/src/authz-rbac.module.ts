@@ -66,6 +66,11 @@ export interface AuthzRbacModuleOptions {
    */
   tenantScoped?: boolean;
   /**
+   * The Postgres schema of the authz models (`@@schema`), see {@link PrismaAuthzStoreOptions.schema}.
+   * Only used when the module builds the store from `client`.
+   */
+  schema?: string;
+  /**
    * Derive a {@link UserRef} from the Gate's current user. Defaults to
    * {@link defaultUserRefMapper} (`{ type, id }` or `{ id }`).
    */
@@ -106,6 +111,7 @@ function resolveStore(options: AuthzRbacModuleOptions): PrismaAuthzStore {
     return new PrismaAuthzStore(options.client, {
       ...(options.roleSources ? { roleSources: true } : {}),
       ...(options.tenantScoped ? { tenantScoped: true } : {}),
+      ...(options.schema !== undefined ? { schema: options.schema } : {}),
     });
   }
   throw new Error('AuthzRbacModule (prisma): provide either `store` or `client` in the options.');

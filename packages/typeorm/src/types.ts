@@ -31,8 +31,11 @@ export interface AuthzStoreOptions {
   /** BYO table names; each defaults to the matching {@link DEFAULT_TABLE_NAMES} entry. */
   tableNames?: TableNames;
   /**
-   * Optional Postgres schema (NOT a connection — the connection comes from the app's
-   * DI per the persistence contract). Tables are created/queried as `"schema"."table"`.
+   * Put the authz tables in their own schema: a Postgres schema, or a MySQL database (NOT a
+   * connection — the connection comes from the app's DI). Every statement names it
+   * (`"authz"."authz_roles"`); `search_path` is never used, so it is safe behind PgBouncer in
+   * transaction mode. `ensureSchema` creates it when missing. SQLite has no schemas: setting it
+   * there throws.
    */
   schema?: string;
 }

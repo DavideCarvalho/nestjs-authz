@@ -1,5 +1,11 @@
 # @dudousxd/nestjs-authz
 
+## 0.13.0
+
+### Minor Changes
+
+- [#80](https://github.com/DavideCarvalho/nestjs-authz/pull/80) [`30d2e98`](https://github.com/DavideCarvalho/nestjs-authz/commit/30d2e986a7c2adc9b5d8464dc4a419f35e30a6eb) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `authorizeByRoles({ roles, loginPath })` and `authorizeByPermission(permission, { loginPath })` send a guest to the app's sign-in page instead of the console's bare 401. A page load is redirected to `loginPath?redirect=<page>`, and a console API call answers 401 with that `redirectTo`, which the console follows. A signed-in user without access still gets 403. Set `redirectParam` to rename the `redirect` parameter.
+
 ## 0.12.0
 
 ### Minor Changes

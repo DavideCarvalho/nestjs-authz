@@ -73,3 +73,17 @@ describe('createAuthzEntitySchemas table name validation', () => {
     );
   });
 });
+
+describe('createAuthzEntitySchemas tenant-scoped key size', () => {
+  it('keeps the 5-column user-role key under MySQL’s 3072-byte limit (utf8mb4, 4 bytes a char)', () => {
+    const keyChars = (tenantScoped: boolean) => {
+      const properties = createAuthzEntitySchemas({}, { tenantScoped }).userRole.meta.properties;
+      return Object.values(properties)
+        .filter((property) => property.primary)
+        .reduce((sum, property) => sum + Number(property.length), 0);
+    };
+    expect(keyChars(true) * 4).toBeLessThanOrEqual(3072);
+    // Without tenants the key keeps its 191-character role id (no change for existing tables).
+    expect(createAuthzEntitySchemas({}, {}).userRole.meta.properties.roleId.length).toBe(191);
+  });
+});

@@ -137,8 +137,20 @@ export interface ConsoleLoginOptions {
 function checkLoginPath(name: string, options: ConsoleLoginOptions | undefined): void {
   const path = options?.loginPath;
   if (path === undefined) return;
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
-    throw new Error(`${name}: \`loginPath\` must be a same-origin path such as '/auth/login'.`);
+  if (
+    typeof path !== 'string' ||
+    !path.startsWith('/') ||
+    path.startsWith('//') ||
+    path.includes('\\') ||
+    path.includes('#')
+  ) {
+    throw new Error(
+      `${name}: \`loginPath\` must be a same-origin path without a fragment, such as '/auth/login'.`,
+    );
+  }
+  const param = options?.redirectParam;
+  if (param !== undefined && (typeof param !== 'string' || param.trim() === '')) {
+    throw new Error(`${name}: \`redirectParam\` must be a non-empty string.`);
   }
 }
 

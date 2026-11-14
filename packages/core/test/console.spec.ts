@@ -243,6 +243,13 @@ describe('authorizeByRoles / authorizeByPermission', () => {
       /same-origin path/,
     );
     expect(() => authorizeByPermission('x', { loginPath: '//evil.test' })).toThrow(/same-origin/);
+    expect(() => authorizeByRoles({ roles: ['admin'], loginPath: '/login#top' })).toThrow(
+      /without a fragment/,
+    );
+    expect(() => authorizeByPermission('x', { loginPath: '/\\evil.test' })).toThrow(/same-origin/);
+    expect(() =>
+      authorizeByRoles({ roles: ['admin'], loginPath: '/login', redirectParam: ' ' }),
+    ).toThrow(/redirectParam/);
   });
 
   it('honors superAdmin for roles', async () => {

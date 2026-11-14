@@ -129,6 +129,7 @@ export type {
   ConsoleAuthorizeResult,
   ConsoleAuthorizer,
   ConsoleAuthorizerClass,
+  ConsoleLoginOptions,
   ConsolePolicyCheck,
 } from './console.js';
 

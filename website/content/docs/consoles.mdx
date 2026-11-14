@@ -43,6 +43,26 @@ MediaModule.forRoot({ authorize: authorizeByPermission('media.console') })
 
 The same check as `@Permission()`: persisted permissions, wildcards apply (`console.*`).
 
+## Sending guests to the sign-in page
+
+Without a user, both helpers answer `unauthenticated`, and the console shows a 401. Pass the
+app's sign-in path to send the guest there instead:
+
+```ts
+DurableModule.forRoot({
+  authorize: authorizeByRoles({ roles: ['admin'], loginPath: '/auth/login' }),
+})
+TelescopeModule.forRoot({
+  authorize: authorizeByPermission('telescope.view', { loginPath: '/auth/login' }),
+})
+```
+
+- **On a console page:** the browser is redirected to `/auth/login?redirect=%2Fdurable`, so the sign-in route can send the user back.
+- **On a console API call:** the response is a 401 carrying that `redirectTo`, and the console follows it. The way back is the page that made the call, taken from `Referer` (same host only).
+- **Users who are signed in but lack the role or permission:** they still get a 403. Redirecting them would loop.
+- **`redirectParam`:** renames the query parameter. The default is `redirect`.
+- **`loginPath`:** must be a same-origin path. Your sign-in route should still validate the `redirect` it receives.
+
 ## By gate name
 
 Pass a string and define the gate:

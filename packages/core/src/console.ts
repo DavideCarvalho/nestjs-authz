@@ -120,20 +120,104 @@ export class AuthzConsoleGate {
   }
 }
 
+/** Sends a guest to the app's sign-in page instead of the console's bare 401. */
+export interface ConsoleLoginOptions {
+  /**
+   * The app's sign-in path, for example `'/auth/login'`. When set, a guest (no user) gets
+   * `{ redirectTo: '/auth/login?redirect=%2Fdurable' }`: a console page redirects there, and
+   * a console API call answers 401 with that `redirectTo`, which the console follows. A
+   * signed-in user without access still gets 403 (redirecting would loop). Must be a
+   * same-origin path.
+   */
+  loginPath?: string;
+  /** The query parameter carrying the way back. Default `'redirect'`. */
+  redirectParam?: string;
+}
+
+function checkLoginPath(name: string, options: ConsoleLoginOptions | undefined): void {
+  const path = options?.loginPath;
+  if (path === undefined) return;
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
+    throw new Error(`${name}: \`loginPath\` must be a same-origin path such as '/auth/login'.`);
+  }
+}
+
+/** The path (with query) of a same-origin URL, or `undefined`. */
+function sameOriginPath(url: string, host: string | undefined): string | undefined {
+  if (url.startsWith('/') && !url.startsWith('//')) return url;
+  try {
+    const parsed = new URL(url);
+    return host !== undefined && parsed.host === host
+      ? `${parsed.pathname}${parsed.search}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Where a guest goes back to after signing in: the page itself on a page load, the page that
+ * made the call (`Referer`, same host only) on a console API call.
+ */
+function returnPath(context: ExecutionContext): string | undefined {
+  const request = context.switchToHttp().getRequest<{
+    headers?: Record<string, string | string[] | undefined>;
+    originalUrl?: string;
+    url?: string;
+  }>();
+  const header = (name: string): string | undefined => {
+    const value = request?.headers?.[name];
+    return Array.isArray(value) ? value[0] : value;
+  };
+  const host = header('host');
+  if (header('accept')?.includes('text/html')) {
+    const url = request?.originalUrl ?? request?.url;
+    return typeof url === 'string' ? sameOriginPath(url, host) : undefined;
+  }
+  const referer = header('referer');
+  return referer ? sameOriginPath(referer, host) : undefined;
+}
+
+function toLogin(
+  result: ConsoleAuthorizeResult,
+  context: ExecutionContext,
+  options: ConsoleLoginOptions | undefined,
+): ConsoleAuthorizeResult {
+  const loginPath = options?.loginPath;
+  if (
+    loginPath === undefined ||
+    typeof result !== 'object' ||
+    !('reason' in result) ||
+    result.reason !== 'unauthenticated'
+  ) {
+    return result;
+  }
+  const back = returnPath(context);
+  if (back === undefined) return { redirectTo: loginPath };
+  const separator = loginPath.includes('?') ? '&' : '?';
+  const param = encodeURIComponent(options?.redirectParam ?? 'redirect');
+  return { redirectTo: `${loginPath}${separator}${param}=${encodeURIComponent(back)}` };
+}
+
 /**
  * Allows a console to a user holding any of `roles` (persisted or on the user object, the
- * same check as `@Roles()`; `superAdmin` applies). A guest is `unauthenticated`, a user
- * without the role `forbidden`.
+ * same check as `@Roles()`; `superAdmin` applies). A guest is `unauthenticated` (or sent to
+ * `loginPath`), a user without the role `forbidden`.
  *
  * ```ts
- * DurableModule.forRoot({ authorize: authorizeByRoles({ roles: ['admin'] }) })
+ * DurableModule.forRoot({
+ *   authorize: authorizeByRoles({ roles: ['admin'], loginPath: '/auth/login' }),
+ * })
  * ```
  */
-export function authorizeByRoles(options: { roles: readonly string[] }): ConsoleAuthorizerClass {
+export function authorizeByRoles(
+  options: { roles: readonly string[] } & ConsoleLoginOptions,
+): ConsoleAuthorizerClass {
   const roles = [...(options?.roles ?? [])];
   if (roles.length === 0) {
     throw new Error('authorizeByRoles: `roles` must name at least one role.');
   }
+  checkLoginPath('authorizeByRoles', options);
 
   @Injectable()
   class AuthorizeByRoles implements ConsoleAuthorizer {
@@ -142,10 +226,11 @@ export function authorizeByRoles(options: { roles: readonly string[] }): Console
       @Inject(AuthzConsoleGate) private readonly consoleGate: AuthzConsoleGate,
     ) {}
 
-    authorize(context: ExecutionContext): Promise<ConsoleAuthorizeResult> {
-      return this.consoleGate.check(context, (user) =>
+    async authorize(context: ExecutionContext): Promise<ConsoleAuthorizeResult> {
+      const result = await this.consoleGate.check(context, (user) =>
         this.gate.forUser(user).allows(RolePolicy, 'has', ...roles),
       );
+      return toLogin(result, context, options);
     }
   }
   return AuthorizeByRoles;
@@ -154,16 +239,22 @@ export function authorizeByRoles(options: { roles: readonly string[] }): Console
 /**
  * Allows a console to a user granted `permission` (persisted, through roles or directly,
  * wildcards apply; the same check as `@Permission()`; `superAdmin` applies).
- * A guest is `unauthenticated`, a user without it `forbidden`.
+ * A guest is `unauthenticated` (or sent to `loginPath`), a user without it `forbidden`.
  *
  * ```ts
- * TelescopeModule.forRoot({ authorize: authorizeByPermission('telescope.view') })
+ * TelescopeModule.forRoot({
+ *   authorize: authorizeByPermission('telescope.view', { loginPath: '/auth/login' }),
+ * })
  * ```
  */
-export function authorizeByPermission(permission: string): ConsoleAuthorizerClass {
+export function authorizeByPermission(
+  permission: string,
+  options?: ConsoleLoginOptions,
+): ConsoleAuthorizerClass {
   if (typeof permission !== 'string' || permission === '') {
     throw new Error('authorizeByPermission: `permission` must be a non-empty string.');
   }
+  checkLoginPath('authorizeByPermission', options);
 
   @Injectable()
   class AuthorizeByPermission implements ConsoleAuthorizer {
@@ -172,10 +263,11 @@ export function authorizeByPermission(permission: string): ConsoleAuthorizerClas
       @Inject(AuthzConsoleGate) private readonly consoleGate: AuthzConsoleGate,
     ) {}
 
-    authorize(context: ExecutionContext): Promise<ConsoleAuthorizeResult> {
-      return this.consoleGate.check(context, (user) =>
+    async authorize(context: ExecutionContext): Promise<ConsoleAuthorizeResult> {
+      const result = await this.consoleGate.check(context, (user) =>
         this.gate.forUser(user).allows(PermissionPolicy, 'has', permission),
       );
+      return toLogin(result, context, options);
     }
   }
   return AuthorizeByPermission;

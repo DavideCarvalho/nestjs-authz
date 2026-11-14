@@ -194,6 +194,57 @@ describe('authorizeByRoles / authorizeByPermission', () => {
     });
   });
 
+  it('sends a guest to loginPath, with the way back', async () => {
+    const { mod } = await bootContext();
+    const moduleRef = mod.get(ModuleRef);
+    const byRoles = await moduleRef.create(
+      authorizeByRoles({ roles: ['admin'], loginPath: '/auth/login' }),
+    );
+    // A page load comes back to the page.
+    expect(
+      await byRoles.authorize(
+        httpContext({ accept: 'text/html', host: 'app.test' }, { originalUrl: '/durable?x=1' }),
+      ),
+    ).toEqual({ redirectTo: '/auth/login?redirect=%2Fdurable%3Fx%3D1' });
+    // A console API call comes back to the page that made it (same host only).
+    expect(
+      await byRoles.authorize(
+        httpContext(
+          {
+            accept: 'application/json',
+            host: 'app.test',
+            referer: 'https://app.test/durable#/runs',
+          },
+          { originalUrl: '/durable/api/runs' },
+        ),
+      ),
+    ).toEqual({ redirectTo: '/auth/login?redirect=%2Fdurable' });
+    expect(
+      await byRoles.authorize(
+        httpContext({ host: 'app.test', referer: 'https://evil.test/x' }, { url: '/durable/api' }),
+      ),
+    ).toEqual({ redirectTo: '/auth/login' });
+    // A signed-in user without the role is still forbidden: redirecting would loop.
+    expect(await byRoles.authorize(httpContext(asUser({ id: 1, roles: ['ops'] })))).toBe(false);
+
+    const byPermission = await moduleRef.create(
+      authorizeByPermission('console.view', {
+        loginPath: '/login?from=console',
+        redirectParam: 'next',
+      }),
+    );
+    expect(
+      await byPermission.authorize(httpContext({ accept: 'text/html' }, { url: '/telescope' })),
+    ).toEqual({ redirectTo: '/login?from=console&next=%2Ftelescope' });
+  });
+
+  it('rejects a loginPath that is not a same-origin path', () => {
+    expect(() => authorizeByRoles({ roles: ['admin'], loginPath: 'https://evil.test' })).toThrow(
+      /same-origin path/,
+    );
+    expect(() => authorizeByPermission('x', { loginPath: '//evil.test' })).toThrow(/same-origin/);
+  });
+
   it('honors superAdmin for roles', async () => {
     const { mod } = await bootContext({
       authz: { superAdmin: (user) => (user as { root?: boolean } | null)?.root === true },
